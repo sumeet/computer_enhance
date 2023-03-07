@@ -105,12 +105,12 @@ fn main() {
     let mut i = 0;
     while i < bytes.len() {
         let first_byte = bytes[i].to_le();
-        if first_byte & 0b11111000 == 0b10001000 {
+        if first_byte >> 2 == 0b_10_0010 {
             let asm = parse_mov_100_010_xx([bytes[i], bytes[i+1]]).asm();
             println!("{}", asm);
             i += 2;
         } else {
-            panic!("0{:b}", bytes[i]);
+            panic!("0b{:b}", bytes[i]);
         }
     }
 }
