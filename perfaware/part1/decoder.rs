@@ -1,5 +1,5 @@
 struct Mov {
-    src: Reg,
+    src: Src,
     dst: Reg,
 }
 
@@ -7,6 +7,20 @@ impl Mov {
     fn asm(&self) -> String {
         format!("mov {}, {}",
                 self.dst.asm().to_lowercase(), self.src.asm().to_lowercase())
+    }
+}
+
+enum Src {
+    Reg(Reg),
+    Imm(u16),
+}
+
+impl Src {
+    fn asm(&self) -> String {
+        match self {
+            Self::Reg(reg) => reg.asm().to_string(),
+            Self::Imm(n) => n.to_string(),
+        }
     }
 }
 
@@ -61,27 +75,49 @@ fn parse_reg_field(reg: u8, w: bool) -> Reg {
     }
 }
 
-fn parse_mov_100_010_xx(bs: [u8; 2]) -> Mov {
+fn parse_mov_100_010_xx(bs: &mut impl Iterator<Item = u8>) -> Mov {
+    let b0 = bs.next().unwrap();
+    let b1 = bs.next().unwrap();
+    
     // bit 0    bit 1
     // 100010DW MOD|REG|R/M
     //           2   3   3
-
-    // is_wide
-    let w = bs[0] & 0b_0000_0001 != 0;
+    let w = b0 & 0b_0000_0001 != 0; // is_wide
     // can ignore this for now, we're only handling reg-reg
-    let _mod_bits = (bs[1] & 0b_1100_0000) >> 6;
-    let reg_bits = (bs[1] & 0b_0011_1000) >> 3;
-    let r_m_bits = bs[1] & 0b_0000_0111;
+    let _mod_bits = (b1 & 0b_1100_0000) >> 6;
+    let reg_bits = (b1 & 0b_0011_1000) >> 3;
+    let r_m_bits = b1 & 0b_0000_0111;
 
-    let d_bit = bs[0] & 0b00000010 != 0;
+    let d_bit = b0 & 0b00000010 != 0;
     let reg_register = parse_reg_field(reg_bits, w);
     let r_m_register = parse_reg_field(r_m_bits, w);
 
     if d_bit {
-        Mov { dst: reg_register, src: r_m_register }
+        Mov { dst: reg_register, src: Src::Reg(r_m_register) }
     } else {
-        Mov { src: reg_register, dst: r_m_register }
+        Mov { src: Src::Reg(reg_register), dst: r_m_register }
     }
+}
+
+
+fn parse_mov_1011_xxxx(bs: &mut impl Iterator<Item = u8>) -> Mov {
+    let b0 = bs.next().unwrap();
+    // bit 0    
+    // 1011|W|REG
+    //      1  3    
+    let w = (b0 & 0b_0000_1000) != 0;
+    let reg = b0 & 0b_0000_0111;
+    let dst = parse_reg_field(reg, w);
+
+    let src = Src::Imm(if w {
+        // if w bit is set, then read 16 bit imm value from next 2 bytes
+        u16::from_le_bytes([bs.next().unwrap(), bs.next().unwrap()])
+    } else {
+        // otherwise read 8 bit imm value from the next byte
+        bs.next().unwrap() as u16
+    });
+
+    Mov { src, dst }
 }
 
 
@@ -99,18 +135,18 @@ fn main() {
     args.next().unwrap();
     let filename = args.next().unwrap_or_else(
         || panic!("Must supply filename"));
-    let bytes = std::fs::read(filename).unwrap();
+    let mut bytes = std::fs::read(filename).unwrap().into_iter().peekable();
 
     println!("bits 16");
-    let mut i = 0;
-    while i < bytes.len() {
-        let first_byte = bytes[i].to_le();
-        if first_byte >> 2 == 0b_10_0010 {
-            let asm = parse_mov_100_010_xx([bytes[i], bytes[i+1]]).asm();
+    while let Some(byte) = bytes.peek() {
+        if byte >> 2 == 0b_10_0010 {
+            let asm = parse_mov_100_010_xx(&mut bytes).asm();
             println!("{}", asm);
-            i += 2;
+        } else if byte >> 4 == 0b_1011  {
+            let asm = parse_mov_1011_xxxx(&mut bytes).asm();
+            println!("{}", asm);
         } else {
-            panic!("0b{:b}", bytes[i]);
+            panic!("0b{:b}", byte);
         }
     }
 }
