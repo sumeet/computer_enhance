@@ -87,7 +87,7 @@ struct Reg {
 }
 
 impl Reg {
-    fn new(mnemonic: &'static str, name: &'static str, region: Region) -> Self {
+    const fn new(mnemonic: &'static str, name: &'static str, region: Region) -> Self {
         Self { mnemonic, name, region }
     }
 
@@ -96,14 +96,16 @@ impl Reg {
     }
 }
 
+const AL : Reg = Reg::new("AL", "A", Region::Low);
+const AX : Reg = Reg::new("AX", "A", Region::Xtended);
 
 // this also works for the R/M field, if MOD = 0b11
 // (register to register copy)
 fn parse_reg_field(reg: u8, w: bool) -> Reg {
     use Region::*;
     match (reg, w) {
-        (0b000, false) => Reg::new("AL", "A", Low),
-        (0b000, true) => Reg::new("AX", "A", Xtended),
+        (0b000, false) => AL,
+        (0b000, true) => AX,
 
         (0b001, false) => Reg::new("CL", "C", Low),
         (0b001, true) => Reg::new("CX", "C", Xtended),
@@ -149,6 +151,28 @@ fn parse_r_m_field(r_m_bits: u8, displacement: Option<i16>) -> EAC {
 fn parse_rm_direct_addr(direct_addr: u16) -> EAC {
     use EABase::*;
     EAC::new(DirectAddr(direct_addr), None)
+}
+
+fn parse_mem_to_acc(bs: &mut impl Iterator<Item = u8>) -> Mov {
+    let b0 = bs.next().unwrap();
+    let addr = consume_u16(bs);
+    // byte 0  
+    // 1010000W
+    let w = b0 & 0b_0000_0001 != 0; // is_wide
+    let dst = Loc::Reg(if w { AX } else { AL });
+    let src = Loc::EAC(EAC::new(EABase::DirectAddr(addr), None));
+    Mov { src, dst }
+}
+
+fn parse_acc_to_mem(bs: &mut impl Iterator<Item = u8>) -> Mov {
+    let b0 = bs.next().unwrap();
+    let addr = consume_u16(bs);
+    // byte 0  
+    // 1010001W
+    let w = b0 & 0b_0000_0001 != 0; // is_wide
+    let src = Loc::Reg(if w { AX } else { AL });
+    let dst = Loc::EAC(EAC::new(EABase::DirectAddr(addr), None));
+    Mov { src, dst }
 }
 
 fn parse_mov_100_010_xx(bs: &mut impl Iterator<Item = u8>) -> Mov {
@@ -270,6 +294,12 @@ fn main() {
             println!("{}", asm);
         } else if byte >> 1 == 0b_110_0011  {
             let asm = parse_imm_to_r_m(&mut bytes).asm();
+            println!("{}", asm);
+        } else if byte >> 1 == 0b_101_0000  {
+            let asm = parse_mem_to_acc(&mut bytes).asm();
+            println!("{}", asm);
+        } else if byte >> 1 == 0b_101_0001  {
+            let asm = parse_acc_to_mem(&mut bytes).asm();
             println!("{}", asm);
         } else {
             panic!("0b{:b}", byte);
