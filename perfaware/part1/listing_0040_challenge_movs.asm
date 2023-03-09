@@ -24,6 +24,7 @@ mov dx, [bx - 32]
 ; Explicit sizes
 mov [bp + di], byte 7
 mov [di + 901], word 347
+mov [di + 419], word 78
 
 ; Direct address
 mov bp, [5]
