@@ -6,7 +6,8 @@ struct Mov {
 enum Loc {
     Reg(Reg),
     EAC(EAC),
-    Imm(u16), // this is only applicable when Loc is a src
+    Imm8(u8), // this is only applicable when Loc is a src
+    Imm16(u16), // this is only applicable when Loc is a src
 }
 
 // Effective Address Calculation
@@ -73,7 +74,8 @@ impl Loc {
     fn asm(&self) -> String {
         match self {
             Self::Reg(reg) => reg.asm().to_string(),
-            Self::Imm(n) => n.to_string(),
+            Self::Imm8(n) => format!("byte {}", n),
+            Self::Imm16(n) => format!("word {}", n),
             Self::EAC(eac) => eac.asm(),
         }
     }
@@ -222,13 +224,11 @@ fn parse_imm_to_reg(bs: &mut impl Iterator<Item = u8>) -> Mov {
     let w = (b0 & 0b_0000_1000) != 0;
     let reg = b0 & 0b_0000_0111;
     let dst = parse_reg_field(reg, w);
-    let src = Loc::Imm(if w {
-        // if w bit is set, then read 16 bit imm value from next 2 bytes
-        consume_u16(bs)
+    let src = if w {
+        Loc::Imm16(consume_u16(bs))
     } else {
-        // otherwise read 8 bit imm value from the next byte
-        bs.next().unwrap() as u16
-    });
+        Loc::Imm8(bs.next().unwrap())
+    };
     Mov { src, dst: Loc::Reg(dst) }
 }
 
@@ -258,8 +258,12 @@ fn parse_imm_to_r_m(bs: &mut impl Iterator<Item = u8>) -> Mov {
         },
         _ => panic!("unexpected MOD field: 0b_{:b}", mod_bits),
     };
-    let imm = if w { consume_u16(bs) } else { bs.next().unwrap() as u16 };
-    Mov { src: Loc::Imm(imm), dst: r_m_loc }
+    let src = if w {
+        Loc::Imm16(consume_u16(bs))
+    } else {
+        Loc::Imm8(bs.next().unwrap())
+    };
+    Mov { src, dst: r_m_loc }
 }
 
 fn consume_u16(bs: &mut impl Iterator<Item = u8>) -> u16 {
