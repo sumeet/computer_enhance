@@ -40,22 +40,23 @@ enum EABase {
     BpDi,
     Si,
     Di,
-    // TODO: direct address
+    DirectAddr(u16),
     Bx,
     Bp,
 }
 
 impl EABase {
-    fn asm(&self) -> &'static str {
+    fn asm(&self) -> String {
         match self {
-            Self::BxSi => "bx + si",
-            Self::BxDi => "bx + di",
-            Self::BpSi => "bp + si",
-            Self::BpDi => "bp + di",
-            Self::Si => "si",
-            Self::Di => "di",
-            Self::Bx => "bx",
-            Self::Bp => "bp",
+            Self::BxSi => "bx + si".into(),
+            Self::BxDi => "bx + di".into(),
+            Self::BpSi => "bp + si".into(),
+            Self::BpDi => "bp + di".into(),
+            Self::Si => "si".into(),
+            Self::Di => "di".into(),
+            Self::Bx => "bx".into(),
+            Self::Bp => "bp".into(),
+            Self::DirectAddr(n) => n.to_string(),
         }
     }
 }
@@ -138,11 +139,16 @@ fn parse_r_m_field(r_m_bits: u8, displacement: Option<i16>) -> EAC {
         0b011 => EAC::new(BpDi, displacement),
         0b100 => EAC::new(Si, displacement),
         0b101 => EAC::new(Di, displacement),
-        0b110 if displacement.is_none() => panic!("not handling Direct Address yet"),
+        0b110 if displacement.is_none() => unreachable!("not handling Direct Address from this function, should have used parse_rm_direct_addr"),
         0b110 if displacement.is_some() => EAC::new(Bp, displacement),
         0b111 => EAC::new(Bx, displacement),
         _ => panic!("unexpected bit pattern: 0b_{:b}", r_m_bits),
     }
+}
+
+fn parse_rm_direct_addr(direct_addr: u16) -> EAC {
+    use EABase::*;
+    EAC::new(DirectAddr(direct_addr), None)
 }
 
 fn parse_mov_100_010_xx(bs: &mut impl Iterator<Item = u8>) -> Mov {
@@ -162,6 +168,9 @@ fn parse_mov_100_010_xx(bs: &mut impl Iterator<Item = u8>) -> Mov {
     // TODO: we're duplicating this too, so idk if we'll need this again again
     let r_m_loc = match mod_bits {
         0b11 => Loc::Reg(parse_reg_field(r_m_bits, w)),
+        0b00 if r_m_bits == 0b110 => {
+            Loc::EAC(parse_rm_direct_addr(consume_u16(bs)))
+        },
         0b00 => Loc::EAC(parse_r_m_field(r_m_bits, None)),
         0b01 => {
             let displacement = (bs.next().unwrap() as i8) as i16;
