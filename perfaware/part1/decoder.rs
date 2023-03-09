@@ -181,7 +181,7 @@ fn consume_u16(bs: &mut impl Iterator<Item = u8>) -> u16 {
 }
 
 
-fn parse_mov_1011_xxxx(bs: &mut impl Iterator<Item = u8>) -> Mov {
+fn parse_imm_to_register(bs: &mut impl Iterator<Item = u8>) -> Mov {
     let b0 = bs.next().unwrap();
     // bit 0    
     // 1011|W|REG
@@ -222,7 +222,7 @@ fn main() {
             let asm = parse_mov_100_010_xx(&mut bytes).asm();
             println!("{}", asm);
         } else if byte >> 4 == 0b_1011  {
-            let asm = parse_mov_1011_xxxx(&mut bytes).asm();
+            let asm = parse_imm_to_register(&mut bytes).asm();
             println!("{}", asm);
         } else {
             panic!("0b{:b}", byte);
