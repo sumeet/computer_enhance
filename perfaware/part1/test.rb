@@ -5,6 +5,7 @@ LISTINGS = [
   "listing_0037_single_register_mov",
   "listing_0038_many_register_mov",
   "listing_0039_more_movs",
+  "listing_0040_challenge_movs",
 ]
 
 def readbin path

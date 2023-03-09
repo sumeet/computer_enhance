@@ -12,11 +12,11 @@ enum Loc {
 // Effective Address Calculation
 struct EAC {
     base: EABase,
-    displacement: Option<u16>, // can be either 0, 8, or 16 bits
+    displacement: Option<i16>, // can be either 0, 8, or 16 bits
 }
 
 impl EAC {
-    fn new(base: EABase, displacement: Option<u16>) -> Self {
+    fn new(base: EABase, displacement: Option<i16>) -> Self {
         Self { base, displacement }
     }
 
@@ -24,7 +24,11 @@ impl EAC {
         if let Some(0) | None = self.displacement {
             format!("[{}]", self.base.asm())
         } else {
-            format!("[{} + {}]", self.base.asm(), self.displacement.unwrap())
+            if self.displacement.unwrap() > 0 {
+                format!("[{} + {}]", self.base.asm(), self.displacement.unwrap())
+            } else {
+                format!("[{} - {}]", self.base.asm(), -self.displacement.unwrap())
+            }
         }
     }
 }
@@ -125,7 +129,7 @@ fn parse_reg_field(reg: u8, w: bool) -> Reg {
     }
 }
 
-fn parse_r_m_field(r_m_bits: u8, displacement: Option<u16>) -> EAC {
+fn parse_r_m_field(r_m_bits: u8, displacement: Option<i16>) -> EAC {
     use EABase::*;
     match r_m_bits {
         0b000 => EAC::new(BxSi, displacement),
@@ -145,7 +149,7 @@ fn parse_mov_100_010_xx(bs: &mut impl Iterator<Item = u8>) -> Mov {
     let b0 = bs.next().unwrap();
     let b1 = bs.next().unwrap();
     
-    // bit 0    bit 1
+    // byte 0   byte 1
     // 100010DW MOD|REG|R/M
     //           2   3   3
     let w = b0 & 0b_0000_0001 != 0; // is_wide
@@ -155,15 +159,16 @@ fn parse_mov_100_010_xx(bs: &mut impl Iterator<Item = u8>) -> Mov {
 
     let d_bit = b0 & 0b00000010 != 0;
     let reg_register = parse_reg_field(reg_bits, w);
+    // TODO: we're duplicating this too, so idk if we'll need this again again
     let r_m_loc = match mod_bits {
         0b11 => Loc::Reg(parse_reg_field(r_m_bits, w)),
         0b00 => Loc::EAC(parse_r_m_field(r_m_bits, None)),
         0b01 => {
-            let displacement = bs.next().unwrap() as u16;
+            let displacement = (bs.next().unwrap() as i8) as i16;
             Loc::EAC(parse_r_m_field(r_m_bits, Some(displacement)))
         },
         0b10 => {
-            let displacement = consume_u16(bs);
+            let displacement = consume_i16(bs);
             Loc::EAC(parse_r_m_field(r_m_bits, Some(displacement)))
         },
         _ => panic!("unexpected MOD field: 0b_{:b}", mod_bits),
@@ -176,12 +181,7 @@ fn parse_mov_100_010_xx(bs: &mut impl Iterator<Item = u8>) -> Mov {
     }
 }
 
-fn consume_u16(bs: &mut impl Iterator<Item = u8>) -> u16 {
-    u16::from_le_bytes([bs.next().unwrap(), bs.next().unwrap()])
-}
-
-
-fn parse_imm_to_register(bs: &mut impl Iterator<Item = u8>) -> Mov {
+fn parse_imm_to_reg(bs: &mut impl Iterator<Item = u8>) -> Mov {
     let b0 = bs.next().unwrap();
     // bit 0    
     // 1011|W|REG
@@ -199,14 +199,49 @@ fn parse_imm_to_register(bs: &mut impl Iterator<Item = u8>) -> Mov {
     Mov { src, dst: Loc::Reg(dst) }
 }
 
+fn parse_imm_to_r_m(bs: &mut impl Iterator<Item = u8>) -> Mov {
+    let b0 = bs.next().unwrap();
+    let b1 = bs.next().unwrap();
+
+    // byte 0   byte 1
+    // 1100011W MOD|000|R/M
+    //           2       3
+    // TODO: duplicated with parse_mov_100_010_xx, i think if we
+    // keep going with adding new instructions, i think this
+    // pattern is a common one
+    let w = b0 & 0b_0000_0001 != 0; // is_wide
+    let mod_bits = (b1 & 0b_1100_0000) >> 6;
+    let r_m_bits = b1 & 0b_0000_0111;
+    let r_m_loc = match mod_bits {
+        0b11 => Loc::Reg(parse_reg_field(r_m_bits, w)),
+        0b00 => Loc::EAC(parse_r_m_field(r_m_bits, None)),
+        0b01 => {
+            let displacement = (bs.next().unwrap() as i8) as i16;
+            Loc::EAC(parse_r_m_field(r_m_bits, Some(displacement)))
+        },
+        0b10 => {
+            let displacement = consume_i16(bs);
+            Loc::EAC(parse_r_m_field(r_m_bits, Some(displacement)))
+        },
+        _ => panic!("unexpected MOD field: 0b_{:b}", mod_bits),
+    };
+    let imm = if w { consume_u16(bs) } else { bs.next().unwrap() as u16 };
+    Mov { src: Loc::Imm(imm), dst: r_m_loc }
+}
+
+fn consume_u16(bs: &mut impl Iterator<Item = u8>) -> u16 {
+    u16::from_le_bytes([bs.next().unwrap(), bs.next().unwrap()])
+}
+
+fn consume_i16(bs: &mut impl Iterator<Item = u8>) -> i16 {
+    i16::from_le_bytes([bs.next().unwrap(), bs.next().unwrap()])
+}
 
 #[allow(unused)]
 enum Region {
-    // 16 bits
-    Xtended,
-    // 8 bits
-    Low,
-    High,
+    Xtended, // 16 bits
+    Low, // 8 bits
+    High, // 8 bits
 }
 
 fn main() {
@@ -222,7 +257,10 @@ fn main() {
             let asm = parse_mov_100_010_xx(&mut bytes).asm();
             println!("{}", asm);
         } else if byte >> 4 == 0b_1011  {
-            let asm = parse_imm_to_register(&mut bytes).asm();
+            let asm = parse_imm_to_reg(&mut bytes).asm();
+            println!("{}", asm);
+        } else if byte >> 1 == 0b_110_0011  {
+            let asm = parse_imm_to_r_m(&mut bytes).asm();
             println!("{}", asm);
         } else {
             panic!("0b{:b}", byte);
