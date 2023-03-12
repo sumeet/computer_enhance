@@ -91,9 +91,10 @@ impl EABase {
     }
 }
 
-#[allow(unused)]
 struct Reg {
+    #[allow(unused)]
     region: Region,
+    #[allow(unused)]
     name: &'static str,
     mnemonic: &'static str,
 }
@@ -317,7 +318,6 @@ fn consume_i16(bs: &mut impl Iterator<Item = u8>) -> i16 {
     i16::from_le_bytes([bs.next().unwrap(), bs.next().unwrap()])
 }
 
-#[allow(unused)]
 enum Region {
     Xtended, // 16 bits
     Low, // 8 bits
