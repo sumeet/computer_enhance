@@ -3,12 +3,45 @@ struct Mov {
     dst: Loc,
 }
 
+impl Mov {
+    fn asm(&self) -> String {
+        format!("mov {}, {}",
+                self.dst.asm().to_lowercase(),
+                self.src.asm().to_lowercase())
+    }
+}
+
+struct Add {
+    src: Loc,
+    dst: Loc,
+}
+
+impl Add {
+    fn asm(&self) -> String {
+        format!("add {}, {}",
+                self.dst.asm().to_lowercase(),
+                self.src.asm().to_lowercase())
+    }
+}
+
 enum Loc {
     Reg(Reg),
     EAC(EAC),
     Imm8(u8), // this is only applicable when Loc is a src
     Imm16(u16), // this is only applicable when Loc is a src
 }
+
+impl Loc {
+    fn asm(&self) -> String {
+        match self {
+            Self::Reg(reg) => reg.asm().to_string(),
+            Self::Imm8(n) => format!("byte {}", n),
+            Self::Imm16(n) => format!("word {}", n),
+            Self::EAC(eac) => eac.asm(),
+        }
+    }
+}
+
 
 // Effective Address Calculation
 struct EAC {
@@ -22,14 +55,10 @@ impl EAC {
     }
 
     fn asm(&self) -> String {
-        if let Some(0) | None = self.displacement {
-            format!("[{}]", self.base.asm())
-        } else {
-            if self.displacement.unwrap() > 0 {
-                format!("[{} + {}]", self.base.asm(), self.displacement.unwrap())
-            } else {
-                format!("[{} - {}]", self.base.asm(), -self.displacement.unwrap())
-            }
+        match self.displacement {
+            None => format!("[{}]", self.base.asm()),
+            Some(d@0..) => format!("[{} + {}]", self.base.asm(), d),
+            Some(d) => format!("[{} - {}]", self.base.asm(), -d),
         }
     }
 }
@@ -62,25 +91,6 @@ impl EABase {
     }
 }
 
-impl Mov {
-    fn asm(&self) -> String {
-        format!("mov {}, {}",
-                self.dst.asm().to_lowercase(),
-                self.src.asm().to_lowercase())
-    }
-}
-
-impl Loc {
-    fn asm(&self) -> String {
-        match self {
-            Self::Reg(reg) => reg.asm().to_string(),
-            Self::Imm8(n) => format!("byte {}", n),
-            Self::Imm16(n) => format!("word {}", n),
-            Self::EAC(eac) => eac.asm(),
-        }
-    }
-}
-
 #[allow(unused)]
 struct Reg {
     region: Region,
@@ -96,18 +106,21 @@ impl Reg {
     fn asm(&self) -> &str {
         self.mnemonic
     }
-}
 
-const AL : Reg = Reg::new("AL", "A", Region::Low);
-const AX : Reg = Reg::new("AX", "A", Region::Xtended);
+    fn acc(w: bool) -> Self {
+        if w { Self::AX } else { Self::AL }
+    }
+
+    const AL : Reg = Reg::new("AL", "A", Region::Low);
+    const AX : Reg = Reg::new("AX", "A", Region::Xtended);
+}
 
 // this also works for the R/M field, if MOD = 0b11
 // (register to register copy)
 fn parse_reg_field(reg: u8, w: bool) -> Reg {
     use Region::*;
     match (reg, w) {
-        (0b000, false) => AL,
-        (0b000, true) => AX,
+        (0b000, _) => Reg::acc(w),
 
         (0b001, false) => Reg::new("CL", "C", Low),
         (0b001, true) => Reg::new("CX", "C", Xtended),
@@ -161,7 +174,7 @@ fn parse_mem_to_acc(bs: &mut impl Iterator<Item = u8>) -> Mov {
     // byte 0  
     // 1010000W
     let w = b0 & 0b_0000_0001 != 0; // is_wide
-    let dst = Loc::Reg(if w { AX } else { AL });
+    let dst = Loc::Reg(Reg::acc(w));
     let src = Loc::EAC(EAC::new(EABase::DirectAddr(addr), None));
     Mov { src, dst }
 }
@@ -172,17 +185,18 @@ fn parse_acc_to_mem(bs: &mut impl Iterator<Item = u8>) -> Mov {
     // byte 0  
     // 1010001W
     let w = b0 & 0b_0000_0001 != 0; // is_wide
-    let src = Loc::Reg(if w { AX } else { AL });
+    let src = Loc::Reg(Reg::acc(w));
     let dst = Loc::EAC(EAC::new(EABase::DirectAddr(addr), None));
     Mov { src, dst }
 }
 
-fn parse_mov_100_010_xx(bs: &mut impl Iterator<Item = u8>) -> Mov {
+fn parse_r_m_to_r_m(bs: &mut impl Iterator<Item = u8>) -> (Loc, Loc) {
     let b0 = bs.next().unwrap();
     let b1 = bs.next().unwrap();
     
+    // XXXXXX: opcode
     // byte 0   byte 1
-    // 100010DW MOD|REG|R/M
+    // XXXXXXDW MOD|REG|R/M
     //           2   3   3
     let w = b0 & 0b_0000_0001 != 0; // is_wide
     let mod_bits = (b1 & 0b_1100_0000) >> 6;
@@ -210,15 +224,15 @@ fn parse_mov_100_010_xx(bs: &mut impl Iterator<Item = u8>) -> Mov {
     };
 
     if d_bit {
-        Mov { dst: Loc::Reg(reg_register), src: r_m_loc }
+        (r_m_loc, Loc::Reg(reg_register))
     } else {
-        Mov { src: Loc::Reg(reg_register), dst: r_m_loc }
+        (Loc::Reg(reg_register), r_m_loc)
     }
 }
 
 fn parse_imm_to_reg(bs: &mut impl Iterator<Item = u8>) -> Mov {
     let b0 = bs.next().unwrap();
-    // bit 0    
+    // byte 0    
     // 1011|W|REG
     //      1  3    
     let w = (b0 & 0b_0000_1000) != 0;
@@ -232,17 +246,40 @@ fn parse_imm_to_reg(bs: &mut impl Iterator<Item = u8>) -> Mov {
     Mov { src, dst: Loc::Reg(dst) }
 }
 
-fn parse_imm_to_r_m(bs: &mut impl Iterator<Item = u8>) -> Mov {
+fn parse_imm_to_acc(bs: &mut impl Iterator<Item = u8>) -> (Loc, Loc) {
+    let b0 = bs.next().unwrap();
+    // byte 0
+    // XXXXXXXW
+    let w = b0 & 0b_0000_0001 != 0; // is_wide
+    if w {
+        (Loc::Imm16(consume_u16(bs)), Loc::Reg(Reg::acc(w)))
+    } else {
+        (Loc::Imm8(bs.next().unwrap()), Loc::Reg(Reg::acc(w)))
+    }
+}
+
+fn parse_imm_to_r_m(bs: &mut impl Iterator<Item = u8>, should_look_at_s: bool) -> (Loc, Loc) {
     let b0 = bs.next().unwrap();
     let b1 = bs.next().unwrap();
 
+    // XXXXXX: opcode
     // byte 0   byte 1
-    // 1100011W MOD|000|R/M
+    // XXXXXXSW MOD|000|R/M
     //           2       3
+
+
     // TODO: duplicated with parse_mov_100_010_xx, i think if we
     // keep going with adding new instructions, i think this
     // pattern is a common one
     let w = b0 & 0b_0000_0001 != 0; // is_wide
+    // SPECIAL CASE:
+    // for the MOV instruction, `s` can be considered as 
+    // always 0
+    let s = if should_look_at_s { // is_sign_extended
+        b0 & 0b_0000_0010 != 0
+    } else {
+        false
+    };
     let mod_bits = (b1 & 0b_1100_0000) >> 6;
     let r_m_bits = b1 & 0b_0000_0111;
     let r_m_loc = match mod_bits {
@@ -258,12 +295,18 @@ fn parse_imm_to_r_m(bs: &mut impl Iterator<Item = u8>) -> Mov {
         },
         _ => panic!("unexpected MOD field: 0b_{:b}", mod_bits),
     };
-    let src = if w {
+    let src = if w && !s {
         Loc::Imm16(consume_u16(bs))
+    } else if w && s {
+        // sign extending, not sure if i'm doing it right
+        // TODO: make sure we have a test for the sign extension
+        let imm16 = (bs.next().unwrap() as i8) as i16;
+        let imm16 : u16 = unsafe { std::mem::transmute(imm16) };
+        Loc::Imm16(imm16)
     } else {
         Loc::Imm8(bs.next().unwrap())
     };
-    Mov { src, dst: r_m_loc }
+    (src, r_m_loc)
 }
 
 fn consume_u16(bs: &mut impl Iterator<Item = u8>) -> u16 {
@@ -281,6 +324,8 @@ enum Region {
     High, // 8 bits
 }
 
+// using https://edge.edx.org/c4x/BITSPilani/EEE231/asset/8086_family_Users_Manual_1_.pdf
+// as reference for how to decode the instructions
 fn main() {
     let mut args = std::env::args();
     args.next().unwrap();
@@ -290,21 +335,35 @@ fn main() {
 
     println!("bits 16");
     while let Some(byte) = bytes.peek() {
+        // MOV instructions
         if byte >> 2 == 0b_10_0010 {
-            let asm = parse_mov_100_010_xx(&mut bytes).asm();
-            println!("{}", asm);
+            let (src, dst) = parse_r_m_to_r_m(&mut bytes);
+            println!("{}", Mov { src, dst }.asm());
         } else if byte >> 4 == 0b_1011  {
             let asm = parse_imm_to_reg(&mut bytes).asm();
             println!("{}", asm);
         } else if byte >> 1 == 0b_110_0011  {
-            let asm = parse_imm_to_r_m(&mut bytes).asm();
-            println!("{}", asm);
+            let (src, dst) = parse_imm_to_r_m(&mut bytes, false);
+            println!("{}", Mov { src, dst }.asm());
         } else if byte >> 1 == 0b_101_0000  {
             let asm = parse_mem_to_acc(&mut bytes).asm();
             println!("{}", asm);
         } else if byte >> 1 == 0b_101_0001  {
             let asm = parse_acc_to_mem(&mut bytes).asm();
             println!("{}", asm);
+        // ADD instructions
+        // reg/memory with register to either
+        } else if byte >> 2 == 0b_00_0000 {
+            let (src, dst) = parse_r_m_to_r_m(&mut bytes);
+            println!("{}", Add { src, dst }.asm());
+        // immediate to register / memory
+        } else if byte >> 2 == 0b_10_0000 {
+            let (src, dst) = parse_imm_to_r_m(&mut bytes, true);
+            println!("{}", Add { src, dst }.asm());
+        // immediate to accumulator
+        } else if byte >> 1 == 0b_000_0010 {
+            let (src, dst) = parse_imm_to_acc(&mut bytes);
+            println!("{}", Add { src, dst }.asm());
         } else {
             panic!("0b{:b}", byte);
         }
