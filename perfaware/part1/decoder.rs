@@ -272,16 +272,23 @@ fn parse_imm_to_reg(bs: &mut impl Iterator<Item = u8>) -> Mov {
     Mov { src, dst: Loc::Reg(dst) }
 }
 
-fn parse_imm_to_acc(bs: &mut impl Iterator<Item = u8>) -> (Loc, Loc) {
-    let b0 = bs.next().unwrap();
+fn parse_imm_to_acc(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> {
     // byte 0
-    // XXXXXXXW
+    // 00BIN10W
+    let binop = BinOpCode::find((b >> 3) & 0b111);
+    if binop.is_none() {
+        return None;
+    } 
+    let binop = binop.unwrap();
+
+    let b0 = bs.next().unwrap();
     let w = b0 & 0b_0000_0001 != 0; // is_wide
-    if w {
+    let (src, dst) = if w {
         (Loc::Imm16(consume_u16(bs)), Loc::Reg(Reg::acc(w)))
     } else {
         (Loc::Imm8(bs.next().unwrap()), Loc::Reg(Reg::acc(w)))
-    }
+    };
+    Some(print_binop_asm(BinopParams::Op(binop), src, dst))
 }
 
 #[repr(u8)]
@@ -410,6 +417,9 @@ fn main() {
         // catch all for rm_to_rm type instructions
         } else if let Some(asm) = parse_r_m_to_r_m(byte, &mut bytes) {
             println!("{}", asm);
+        // catch all for imm_to_acc type instructions
+        } else if let Some(asm) = parse_imm_to_acc(byte, &mut bytes) {
+            println!("{}", asm);
         // MOV instructions:
         } else if byte >> 4 == 0b_1011  {
             let asm = parse_imm_to_reg(&mut bytes).asm();
@@ -420,17 +430,6 @@ fn main() {
         } else if byte >> 1 == 0b_101_0001  {
             let asm = parse_acc_to_mem(&mut bytes).asm();
             println!("{}", asm);
-
-        // ADD instructions
-        } else if byte >> 1 == 0b_000_0010 {
-            let (src, dst) = parse_imm_to_acc(&mut bytes);
-            println!("{}", Add { src, dst }.asm());
-
-        // SUB instructions
-        // immediate to accumulator
-        } else if byte >> 1 == 0b_001_0110 {
-            let (src, dst) = parse_imm_to_acc(&mut bytes);
-            println!("{}", Sub { src, dst }.asm());
         } else {
             panic!("0b{:b}", byte);
         }
