@@ -204,14 +204,24 @@ fn parse_acc_to_mem(bs: &mut impl Iterator<Item = u8>) -> Mov {
     Mov { src, dst }
 }
 
-fn parse_r_m_to_r_m(bs: &mut impl Iterator<Item = u8>) -> (Loc, Loc) {
+fn parse_r_m_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> {
+    // byte 0   byte 1
+    // OPCODE|DW MOD|REG|R/M
+    //   6       2   3   3
+    let opcode = b >> 2;
+    let is_mov = opcode == 0b_1000_10;
+
+    // inside the 6 bits of OPCODE, if not a mov
+    // 00|BINOP|0
+    //      3
+    let binop = (0b_11_000_1 & opcode == 0)
+        .then(|| BinOpCode::find((opcode >> 1) & 0b111)).flatten();
+    if !is_mov && binop.is_none() {
+        return None
+    }
+
     let b0 = bs.next().unwrap();
     let b1 = bs.next().unwrap();
-    
-    // XXXXXX: opcode
-    // byte 0   byte 1
-    // XXXXXXDW MOD|REG|R/M
-    //           2   3   3
     let w = b0 & 0b_0000_0001 != 0; // is_wide
     let mod_bits = (b1 & 0b_1100_0000) >> 6;
     let reg_bits = (b1 & 0b_0011_1000) >> 3;
@@ -237,11 +247,13 @@ fn parse_r_m_to_r_m(bs: &mut impl Iterator<Item = u8>) -> (Loc, Loc) {
         _ => panic!("unexpected MOD field: 0b_{:b}", mod_bits),
     };
 
-    if d_bit {
+    let (src, dst) = if d_bit {
         (r_m_loc, Loc::Reg(reg_register))
     } else {
         (Loc::Reg(reg_register), r_m_loc)
-    }
+    };
+    let params = BinopParams::from(is_mov, binop);
+    Some(print_binop_asm(params, src, dst))
 }
 
 fn parse_imm_to_reg(bs: &mut impl Iterator<Item = u8>) -> Mov {
@@ -273,9 +285,18 @@ fn parse_imm_to_acc(bs: &mut impl Iterator<Item = u8>) -> (Loc, Loc) {
 }
 
 #[repr(u8)]
+#[derive(Clone, Copy, Debug)]
 enum BinOpCode {
     Add = 0b000,
     Sub = 0b101,
+}
+
+impl BinOpCode {
+    const ALL : [Self; 2] = [Self::Add, Self::Sub];
+
+    fn find(binop: u8) -> Option<Self> {
+        Self::ALL.iter().find(|b| **b as u8 == binop).copied()
+    }
 }
 
 const MOV_OPCODE: u8 = 0b_110_0011;
@@ -302,7 +323,7 @@ fn parse_imm_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> 
     // for the MOV instruction, `s` can be considered as 
     // always 0
     let s = !is_mov && (b0 & 0b_0000_0010 != 0); // is_sign_extended
-    let binop = (b1 >> 3) & 0b111;
+    let binop = BinOpCode::find((b1 >> 3) & 0b111);
     let mod_bits = (b1 & 0b_1100_0000) >> 6;
     let r_m_bits = b1 & 0b_0000_0111;
     let r_m_loc = match mod_bits {
@@ -329,16 +350,33 @@ fn parse_imm_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> 
     } else {
         Loc::Imm8(bs.next().unwrap())
     };
-    let asm = if is_mov {
-        Mov { src, dst: r_m_loc }.asm()
-    } else if binop == BinOpCode::Add as _ {
-        Add { src, dst: r_m_loc }.asm()
-    } else if binop == BinOpCode::Sub as _ {
-        Sub { src, dst: r_m_loc }.asm()
-    } else {
-        panic!("unhandled binop: 0b{:b}", binop)
-    };
-    Some(asm)
+
+    let params = BinopParams::from(is_mov, binop);
+    Some(print_binop_asm(params, src, r_m_loc))
+}
+
+#[derive(Clone, Copy)]
+enum BinopParams {
+    Mov,
+    Op(BinOpCode),
+}
+
+impl BinopParams {
+    fn from(is_mov: bool, code: Option<BinOpCode>) -> Self {
+        if is_mov {
+            Self::Mov
+        } else {
+            Self::Op(code.unwrap())
+        }
+    }
+}
+
+fn print_binop_asm(params: BinopParams, src: Loc, dst: Loc) -> String {
+    match params {
+        BinopParams::Mov => Mov { src, dst }.asm(),
+        BinopParams::Op(BinOpCode::Add) => Add { src, dst }.asm(),
+        BinopParams::Op(BinOpCode::Sub) => Sub { src, dst }.asm(),
+    }
 }
 
 fn consume_u16(bs: &mut impl Iterator<Item = u8>) -> u16 {
@@ -369,10 +407,10 @@ fn main() {
         // catch all for imm_to_r_m type instructions
         if let Some(asm) = parse_imm_to_r_m(byte, &mut bytes) {
             println!("{}", asm);
-        // MOV instructions
-        } else if byte >> 2 == 0b_10_0010 {
-            let (src, dst) = parse_r_m_to_r_m(&mut bytes);
-            println!("{}", Mov { src, dst }.asm());
+        // catch all for rm_to_rm type instructions
+        } else if let Some(asm) = parse_r_m_to_r_m(byte, &mut bytes) {
+            println!("{}", asm);
+        // MOV instructions:
         } else if byte >> 4 == 0b_1011  {
             let asm = parse_imm_to_reg(&mut bytes).asm();
             println!("{}", asm);
@@ -384,20 +422,11 @@ fn main() {
             println!("{}", asm);
 
         // ADD instructions
-        // reg/memory with register to either
-        } else if byte >> 2 == 0b_00_0000 {
-            let (src, dst) = parse_r_m_to_r_m(&mut bytes);
-            println!("{}", Add { src, dst }.asm());
-        // immediate to accumulator
         } else if byte >> 1 == 0b_000_0010 {
             let (src, dst) = parse_imm_to_acc(&mut bytes);
             println!("{}", Add { src, dst }.asm());
 
         // SUB instructions
-        // reg/memory with register to either
-        } else if byte >> 2 == 0b_00_1010 {
-            let (src, dst) = parse_r_m_to_r_m(&mut bytes);
-            println!("{}", Sub { src, dst }.asm());
         // immediate to accumulator
         } else if byte >> 1 == 0b_001_0110 {
             let (src, dst) = parse_imm_to_acc(&mut bytes);
