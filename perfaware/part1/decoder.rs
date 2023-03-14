@@ -24,6 +24,19 @@ impl Add {
     }
 }
 
+struct Sub {
+    src: Loc,
+    dst: Loc,
+}
+
+impl Sub {
+    fn asm(&self) -> String {
+        format!("sub {}, {}",
+                self.dst.asm().to_lowercase(),
+                self.src.asm().to_lowercase())
+    }
+}
+
 enum Loc {
     Reg(Reg),
     EAC(EAC),
@@ -259,28 +272,37 @@ fn parse_imm_to_acc(bs: &mut impl Iterator<Item = u8>) -> (Loc, Loc) {
     }
 }
 
-fn parse_imm_to_r_m(bs: &mut impl Iterator<Item = u8>, should_look_at_s: bool) -> (Loc, Loc) {
+#[repr(u8)]
+enum BinOpCode {
+    Add = 0b000,
+    Sub = 0b101,
+}
+
+const MOV_OPCODE: u8 = 0b_110_0011;
+const MOV_OPCODE_LEN : u8 = 7;
+
+const IMM_TO_R_M_OPCODE: u8 = 0b_10_0000;
+const IMM_TO_R_M_OPCODE_LEN : u8 = 6;
+
+fn parse_imm_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> {
+    let is_mov = b >> (8 - MOV_OPCODE_LEN) == MOV_OPCODE;
+    let is_other_imm_to_r_m = b >> (8 - IMM_TO_R_M_OPCODE_LEN) == IMM_TO_R_M_OPCODE;
+    if !is_mov && !is_other_imm_to_r_m {
+        return None;
+    }
+
     let b0 = bs.next().unwrap();
     let b1 = bs.next().unwrap();
-
     // XXXXXX: opcode
     // byte 0   byte 1
-    // XXXXXXSW MOD|000|R/M
-    //           2       3
-
-
-    // TODO: duplicated with parse_mov_100_010_xx, i think if we
-    // keep going with adding new instructions, i think this
-    // pattern is a common one
+    // XXXXXXSW MOD|BINOP|R/M
+    //           2    3    3
     let w = b0 & 0b_0000_0001 != 0; // is_wide
     // SPECIAL CASE:
     // for the MOV instruction, `s` can be considered as 
     // always 0
-    let s = if should_look_at_s { // is_sign_extended
-        b0 & 0b_0000_0010 != 0
-    } else {
-        false
-    };
+    let s = !is_mov && (b0 & 0b_0000_0010 != 0); // is_sign_extended
+    let binop = (b1 >> 3) & 0b111;
     let mod_bits = (b1 & 0b_1100_0000) >> 6;
     let r_m_bits = b1 & 0b_0000_0111;
     let r_m_loc = match mod_bits {
@@ -307,7 +329,16 @@ fn parse_imm_to_r_m(bs: &mut impl Iterator<Item = u8>, should_look_at_s: bool) -
     } else {
         Loc::Imm8(bs.next().unwrap())
     };
-    (src, r_m_loc)
+    let asm = if is_mov {
+        Mov { src, dst: r_m_loc }.asm()
+    } else if binop == BinOpCode::Add as _ {
+        Add { src, dst: r_m_loc }.asm()
+    } else if binop == BinOpCode::Sub as _ {
+        Sub { src, dst: r_m_loc }.asm()
+    } else {
+        panic!("unhandled binop: 0b{:b}", binop)
+    };
+    Some(asm)
 }
 
 fn consume_u16(bs: &mut impl Iterator<Item = u8>) -> u16 {
@@ -334,36 +365,43 @@ fn main() {
     let mut bytes = std::fs::read(filename).unwrap().into_iter().peekable();
 
     println!("bits 16");
-    while let Some(byte) = bytes.peek() {
+    while let Some(&byte) = bytes.peek() {
+        // catch all for imm_to_r_m type instructions
+        if let Some(asm) = parse_imm_to_r_m(byte, &mut bytes) {
+            println!("{}", asm);
         // MOV instructions
-        if byte >> 2 == 0b_10_0010 {
+        } else if byte >> 2 == 0b_10_0010 {
             let (src, dst) = parse_r_m_to_r_m(&mut bytes);
             println!("{}", Mov { src, dst }.asm());
         } else if byte >> 4 == 0b_1011  {
             let asm = parse_imm_to_reg(&mut bytes).asm();
             println!("{}", asm);
-        } else if byte >> 1 == 0b_110_0011  {
-            let (src, dst) = parse_imm_to_r_m(&mut bytes, false);
-            println!("{}", Mov { src, dst }.asm());
         } else if byte >> 1 == 0b_101_0000  {
             let asm = parse_mem_to_acc(&mut bytes).asm();
             println!("{}", asm);
         } else if byte >> 1 == 0b_101_0001  {
             let asm = parse_acc_to_mem(&mut bytes).asm();
             println!("{}", asm);
+
         // ADD instructions
         // reg/memory with register to either
         } else if byte >> 2 == 0b_00_0000 {
             let (src, dst) = parse_r_m_to_r_m(&mut bytes);
             println!("{}", Add { src, dst }.asm());
-        // immediate to register / memory
-        } else if byte >> 2 == 0b_10_0000 {
-            let (src, dst) = parse_imm_to_r_m(&mut bytes, true);
-            println!("{}", Add { src, dst }.asm());
         // immediate to accumulator
         } else if byte >> 1 == 0b_000_0010 {
             let (src, dst) = parse_imm_to_acc(&mut bytes);
             println!("{}", Add { src, dst }.asm());
+
+        // SUB instructions
+        // reg/memory with register to either
+        } else if byte >> 2 == 0b_00_1010 {
+            let (src, dst) = parse_r_m_to_r_m(&mut bytes);
+            println!("{}", Sub { src, dst }.asm());
+        // immediate to accumulator
+        } else if byte >> 1 == 0b_001_0110 {
+            let (src, dst) = parse_imm_to_acc(&mut bytes);
+            println!("{}", Sub { src, dst }.asm());
         } else {
             panic!("0b{:b}", byte);
         }
