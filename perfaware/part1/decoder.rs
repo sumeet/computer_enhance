@@ -37,6 +37,19 @@ impl Sub {
     }
 }
 
+struct Cmp {
+    src: Loc,
+    dst: Loc,
+}
+
+impl Cmp {
+    fn asm(&self) -> String {
+        format!("cmp {}, {}",
+                self.dst.asm().to_lowercase(),
+                self.src.asm().to_lowercase())
+    }
+}
+
 enum Loc {
     Reg(Reg),
     EAC(EAC),
@@ -296,10 +309,17 @@ fn parse_imm_to_acc(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> 
 enum BinOpCode {
     Add = 0b000,
     Sub = 0b101,
+    Cmp = 0b111,
 }
 
 impl BinOpCode {
+    // TODO: WE WILL STRIKE HERE
+    // Cmp seems to follow the same pattern for Add and Sub, but
+    // when we include Cmp in the code path, it seems to mess with
+    // MOV instructions... (Cmp instructions currently disabled in
+    // listing 41)
     const ALL : [Self; 2] = [Self::Add, Self::Sub];
+    //const ALL : [Self; 3] = [Self::Add, Self::Sub, Self::Cmp];
 
     fn find(binop: u8) -> Option<Self> {
         Self::ALL.iter().find(|b| **b as u8 == binop).copied()
@@ -383,6 +403,7 @@ fn print_binop_asm(params: BinopParams, src: Loc, dst: Loc) -> String {
         BinopParams::Mov => Mov { src, dst }.asm(),
         BinopParams::Op(BinOpCode::Add) => Add { src, dst }.asm(),
         BinopParams::Op(BinOpCode::Sub) => Sub { src, dst }.asm(),
+        BinopParams::Op(BinOpCode::Cmp) => Cmp { src, dst }.asm(),
     }
 }
 
