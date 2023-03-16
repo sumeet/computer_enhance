@@ -242,24 +242,7 @@ fn parse_r_m_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> 
 
     let d_bit = b0 & 0b00000010 != 0;
     let reg_register = parse_reg_field(reg_bits, w);
-    // TODO: we're duplicating this too, so idk if we'll need this again again
-    let r_m_loc = match mod_bits {
-        0b11 => Loc::Reg(parse_reg_field(r_m_bits, w)),
-        0b00 if r_m_bits == 0b110 => {
-            Loc::EAC(parse_r_m_direct_addr(consume_u16(bs)))
-        },
-        0b00 => Loc::EAC(parse_r_m_field(r_m_bits, None)),
-        0b01 => {
-            let displacement = (bs.next().unwrap() as i8) as i16;
-            Loc::EAC(parse_r_m_field(r_m_bits, Some(displacement)))
-        },
-        0b10 => {
-            let displacement = consume_i16(bs);
-            Loc::EAC(parse_r_m_field(r_m_bits, Some(displacement)))
-        },
-        _ => panic!("unexpected MOD field: 0b_{:b}", mod_bits),
-    };
-
+    let r_m_loc = parse_r_m_loc(bs, mod_bits, r_m_bits, w);
     let (src, dst) = if d_bit {
         (r_m_loc, Loc::Reg(reg_register))
     } else {
@@ -317,12 +300,6 @@ enum BinOpCode {
 }
 
 impl BinOpCode {
-    // TODO: WE WILL STRIKE HERE
-    // Cmp seems to follow the same pattern for Add and Sub, but
-    // when we include Cmp in the code path, it seems to mess with
-    // MOV instructions... (Cmp instructions currently disabled in
-    // listing 41)
-    //const ALL : [Self; 2] = [Self::Add, Self::Sub];
     const ALL : [Self; 3] = [Self::Add, Self::Sub, Self::Cmp];
 
     fn find(binop: u8) -> Option<Self> {
@@ -335,6 +312,25 @@ const MOV_OPCODE_LEN : u8 = 7;
 
 const IMM_TO_R_M_OPCODE: u8 = 0b_10_0000;
 const IMM_TO_R_M_OPCODE_LEN : u8 = 6;
+
+fn parse_r_m_loc(bs: &mut impl Iterator<Item = u8>, mod_bits: u8, r_m_bits: u8, w: bool) -> Loc {
+    match mod_bits {
+            0b11 => Loc::Reg(parse_reg_field(r_m_bits, w)),
+            0b00 if r_m_bits == 0b110 => {
+                Loc::EAC(parse_r_m_direct_addr(consume_u16(bs)))
+            },
+            0b00 => Loc::EAC(parse_r_m_field(r_m_bits, None)),
+            0b01 => {
+                let displacement = (bs.next().unwrap() as i8) as i16;
+                Loc::EAC(parse_r_m_field(r_m_bits, Some(displacement)))
+            },
+            0b10 => {
+                let displacement = consume_i16(bs);
+                Loc::EAC(parse_r_m_field(r_m_bits, Some(displacement)))
+            },
+            _ => panic!("unexpected MOD field: 0b_{:b}", mod_bits),
+        }
+}
 
 fn parse_imm_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> {
     let is_mov = b >> (8 - MOV_OPCODE_LEN) == MOV_OPCODE;
@@ -358,24 +354,7 @@ fn parse_imm_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> 
     let mod_bits = (b1 & 0b_1100_0000) >> 6;
     let r_m_bits = b1 & 0b_0000_0111;
 
-    // there's a comment about this being duplicated, maybe we should pay attention and
-    // consolidate!!!!
-    let r_m_loc = match mod_bits {
-        0b11 => Loc::Reg(parse_reg_field(r_m_bits, w)),
-        0b00 if r_m_bits == 0b110 => {
-            Loc::EAC(parse_r_m_direct_addr(consume_u16(bs)))
-        },
-        0b00 => Loc::EAC(parse_r_m_field(r_m_bits, None)),
-        0b01 => {
-            let displacement = (bs.next().unwrap() as i8) as i16;
-            Loc::EAC(parse_r_m_field(r_m_bits, Some(displacement)))
-        },
-        0b10 => {
-            let displacement = consume_i16(bs);
-            Loc::EAC(parse_r_m_field(r_m_bits, Some(displacement)))
-        },
-        _ => panic!("unexpected MOD field: 0b_{:b}", mod_bits),
-    };
+    let r_m_loc = parse_r_m_loc(bs, mod_bits, r_m_bits, w);
     let src = if w && !s {
         Loc::Imm16(consume_u16(bs))
     } else if w && s {
