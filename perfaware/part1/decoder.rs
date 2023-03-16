@@ -1,3 +1,93 @@
+struct Jump {
+    typ: JumpType,
+    offset: i8,
+}
+
+impl Jump {
+    fn asm(&self) -> String {
+        let mnemonic = match self.typ {
+            JumpType::Jnz => "jnz",
+            JumpType::Je => "je",
+            JumpType::Jl => "jl",
+            JumpType::Jle => "jle",
+            JumpType::Jb => "jb",
+            JumpType::Jbe => "jbe",
+            JumpType::Jp => "jp",
+            JumpType::Jo => "jo",
+            JumpType::Js => "js",
+            JumpType::Jnl => "jnl",
+            JumpType::Jg => "jg",
+            JumpType::Jnb => "jnb",
+            JumpType::Ja => "ja",
+            JumpType::Jnp => "jnp",
+            JumpType::Jno => "jno",
+            JumpType::Jns => "jns",
+            JumpType::Loop => "loop",
+            JumpType::Loopz => "loopz",
+            JumpType::Loopnz => "loopnz",
+            JumpType::Jcxz => "jcxz",
+        };
+        // nasm is weird, and takes the offset for BEFORE the instruction
+        // instead of after, so we have to mix in the instruction size
+        let nasm_offset = Self::instruction_size() as i8 + self.offset;
+        if nasm_offset >= 0 {
+            format!("{mnemonic} $+{nasm_offset}")
+        } else {
+            format!("{mnemonic} ${nasm_offset}")
+        }
+    }
+
+    // for now, they're all 2, see page 168 in the intel 8086 manual
+    const fn instruction_size() -> usize {
+        2
+    }
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone)]
+enum JumpType {
+    Jnz = 0b_0111_0101, // also stands for Jne
+    Je = 0b_0111_0100,
+    Jl = 0b_0111_1100,
+    Jle = 0b_0111_1110,
+    Jb = 0b_0111_0010,
+    Jbe = 0b_0111_0110,
+    Jp = 0b_0111_1010,
+    Jo = 0b_0111_0000,
+    Js = 0b_0111_1000,
+    Jnl = 0b_0111_1101,
+    Jg = 0b_0111_1111,
+    Jnb = 0b_0111_0011,
+    Ja = 0b_0111_0111,
+    Jnp = 0b_0111_1011,
+    Jno = 0b_0111_0001,
+    Jns = 0b_0111_1001,
+    Loop = 0b_1110_0010,
+    Loopz = 0b_1110_0001,
+    Loopnz = 0b_1110_0000,
+    Jcxz = 0b_1110_0011,
+}
+
+impl JumpType {
+    const ALL : [Self; 20] = [
+        Self::Jnz, Self::Je, Self::Jl, Self::Jle, Self::Jb,
+        Self::Jbe, Self::Jp, Self::Jo, Self::Js, Self::Jnl,
+        Self::Jg, Self::Jnb, Self::Ja, Self::Jnp, Self::Jno,
+        Self::Jns, Self::Loop, Self::Loopz, Self::Loopnz,
+        Self::Jcxz];
+
+    fn find(inst: u8) -> Option<Self> {
+        Self::ALL.iter().find(|b| **b as u8 == inst).copied()
+    }
+}
+
+fn try_parse_jump(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> {
+    let typ = JumpType::find(b)?;
+    bs.next().unwrap(); // advance the iterator forward 1 to consume the
+                        // first byte
+    Some(Jump { typ, offset: consume_i8(bs) }.asm())
+}
+
 struct Mov {
     src: Loc,
     dst: Loc,
@@ -404,6 +494,10 @@ fn consume_i16(bs: &mut impl Iterator<Item = u8>) -> i16 {
     i16::from_le_bytes([bs.next().unwrap(), bs.next().unwrap()])
 }
 
+fn consume_i8(bs: &mut impl Iterator<Item = u8>) -> i8 {
+    i8::from_le_bytes([bs.next().unwrap()])
+}
+
 enum Region {
     Xtended, // 16 bits
     Low, // 8 bits
@@ -422,9 +516,6 @@ fn main() {
     println!("bits 16");
     while let Some(&byte) = bytes.peek() {
         // catch all for imm_to_r_m type instructions
-        // ----------------------
-        // BREADCRUMB #0
-        // ----------------------
         if let Some(asm) = parse_imm_to_r_m(byte, &mut bytes) {
             println!("{}", asm);
         // catch all for rm_to_rm type instructions
@@ -432,6 +523,9 @@ fn main() {
             println!("{}", asm);
         // catch all for imm_to_acc type instructions
         } else if let Some(asm) = parse_imm_to_acc(byte, &mut bytes) {
+            println!("{}", asm);
+        // catch all for jump type instructions
+        } else if let Some(asm) = try_parse_jump(byte, &mut bytes) {
             println!("{}", asm);
         // MOV instructions:
         } else if byte >> 4 == 0b_1011  {
