@@ -183,14 +183,14 @@ fn parse_r_m_field(r_m_bits: u8, displacement: Option<i16>) -> EAC {
         0b011 => EAC::new(BpDi, displacement),
         0b100 => EAC::new(Si, displacement),
         0b101 => EAC::new(Di, displacement),
-        0b110 if displacement.is_none() => unreachable!("not handling Direct Address from this function, should have used parse_rm_direct_addr"),
+        0b110 if displacement.is_none() => unreachable!("not handling Direct Address from this function, should have used parse_r_m_direct_addr"),
         0b110 if displacement.is_some() => EAC::new(Bp, displacement),
         0b111 => EAC::new(Bx, displacement),
         _ => panic!("unexpected bit pattern: 0b_{:b}", r_m_bits),
     }
 }
 
-fn parse_rm_direct_addr(direct_addr: u16) -> EAC {
+fn parse_r_m_direct_addr(direct_addr: u16) -> EAC {
     use EABase::*;
     EAC::new(DirectAddr(direct_addr), None)
 }
@@ -246,7 +246,7 @@ fn parse_r_m_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> 
     let r_m_loc = match mod_bits {
         0b11 => Loc::Reg(parse_reg_field(r_m_bits, w)),
         0b00 if r_m_bits == 0b110 => {
-            Loc::EAC(parse_rm_direct_addr(consume_u16(bs)))
+            Loc::EAC(parse_r_m_direct_addr(consume_u16(bs)))
         },
         0b00 => Loc::EAC(parse_r_m_field(r_m_bits, None)),
         0b01 => {
@@ -288,6 +288,10 @@ fn parse_imm_to_reg(bs: &mut impl Iterator<Item = u8>) -> Mov {
 fn parse_imm_to_acc(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> {
     // byte 0
     // 00BIN10W
+    if b & 0b11_000_110 != 0b00_000_100 { // 00_xxx_10x
+        return None;
+    }
+
     let binop = BinOpCode::find((b >> 3) & 0b111);
     if binop.is_none() {
         return None;
@@ -318,8 +322,8 @@ impl BinOpCode {
     // when we include Cmp in the code path, it seems to mess with
     // MOV instructions... (Cmp instructions currently disabled in
     // listing 41)
-    const ALL : [Self; 2] = [Self::Add, Self::Sub];
-    //const ALL : [Self; 3] = [Self::Add, Self::Sub, Self::Cmp];
+    //const ALL : [Self; 2] = [Self::Add, Self::Sub];
+    const ALL : [Self; 3] = [Self::Add, Self::Sub, Self::Cmp];
 
     fn find(binop: u8) -> Option<Self> {
         Self::ALL.iter().find(|b| **b as u8 == binop).copied()
@@ -353,8 +357,14 @@ fn parse_imm_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> 
     let binop = BinOpCode::find((b1 >> 3) & 0b111);
     let mod_bits = (b1 & 0b_1100_0000) >> 6;
     let r_m_bits = b1 & 0b_0000_0111;
+
+    // there's a comment about this being duplicated, maybe we should pay attention and
+    // consolidate!!!!
     let r_m_loc = match mod_bits {
         0b11 => Loc::Reg(parse_reg_field(r_m_bits, w)),
+        0b00 if r_m_bits == 0b110 => {
+            Loc::EAC(parse_r_m_direct_addr(consume_u16(bs)))
+        },
         0b00 => Loc::EAC(parse_r_m_field(r_m_bits, None)),
         0b01 => {
             let displacement = (bs.next().unwrap() as i8) as i16;
@@ -433,6 +443,9 @@ fn main() {
     println!("bits 16");
     while let Some(&byte) = bytes.peek() {
         // catch all for imm_to_r_m type instructions
+        // ----------------------
+        // BREADCRUMB #0
+        // ----------------------
         if let Some(asm) = parse_imm_to_r_m(byte, &mut bytes) {
             println!("{}", asm);
         // catch all for rm_to_rm type instructions
