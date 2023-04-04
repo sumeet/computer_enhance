@@ -26,6 +26,38 @@ impl CPU {
     fn new() -> Self {
         Self { registers: [0; 8] }
     }
+
+    fn exec(&mut self, inst: Instruction) {
+        match inst {
+            Instruction::Mov(mov) => {
+                let src = self.get_src(mov.src);
+                self.set_dest(mov.dst, src);
+            }
+            Instruction::Jump(jump) => todo!(),
+            Instruction::Add(add) => todo!(),
+            Instruction::Sub(sub) => todo!(),
+            Instruction::Cmp(cmp) => todo!(),
+        }
+    }
+
+    fn get_src(&self, loc: Loc) -> u32 {
+        match loc {
+            Loc::Imm8(n) => n as _,
+            Loc::Imm16(n) => n as _,
+            Loc::Reg(_) => todo!(),
+            Loc::EAC(_) => todo!(),
+        }
+    }
+
+    fn set_dest(&mut self, loc: Loc, val: u32) {
+        match loc {
+            Loc::Reg(reg) => {
+                todo!()
+            },
+            Loc::EAC(_) => todo!(),
+            Loc::Imm8(_) | Loc::Imm16(_) => unreachable!(),
+        }
+    }
 }
 
 struct Jump {
