@@ -1,3 +1,33 @@
+enum Instruction {
+    Mov(Mov),
+    Jump(Jump),
+    Add(Add),
+    Sub(Sub),
+    Cmp(Cmp),
+}
+
+impl Instruction {
+    fn asm(&self) -> String {
+        match self {
+            Self::Mov(m) => m.asm(),
+            Self::Jump(j) => j.asm(),
+            Self::Add(a) => a.asm(),
+            Self::Sub(s) => s.asm(),
+            Self::Cmp(c) => c.asm(),
+        }
+    }
+}
+
+struct CPU {
+    registers: [u32; 8],
+}
+
+impl CPU {
+    fn new() -> Self {
+        Self { registers: [0; 8] }
+    }
+}
+
 struct Jump {
     typ: JumpType,
     offset: i8,
@@ -81,11 +111,11 @@ impl JumpType {
     }
 }
 
-fn try_parse_jump(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> {
+fn try_parse_jump(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<Jump> {
     let typ = JumpType::find(b)?;
     bs.next().unwrap(); // advance the iterator forward 1 to consume the
                         // first byte
-    Some(Jump { typ, offset: consume_i8(bs) }.asm())
+    Some(Jump { typ, offset: consume_i8(bs) })
 }
 
 struct Mov {
@@ -141,7 +171,7 @@ impl Cmp {
 }
 
 enum Loc {
-    Reg(Reg),
+    Reg(RegIndex),
     EAC(EAC),
     Imm8(u8), // this is only applicable when Loc is a src
     Imm16(u16), // this is only applicable when Loc is a src
@@ -207,17 +237,29 @@ impl EABase {
     }
 }
 
-struct Reg {
-    #[allow(unused)]
-    region: Region,
-    #[allow(unused)]
-    name: &'static str,
-    mnemonic: &'static str,
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum Reg {
+    A = 0,
+    B,
+    C,
+    D,
+    DI,
+    SI,
+    SP,
+    BP,
 }
 
-impl Reg {
-    const fn new(mnemonic: &'static str, name: &'static str, region: Region) -> Self {
-        Self { mnemonic, name, region }
+struct RegIndex {
+    #[allow(unused)]
+    region: Region,
+    register: Reg,
+    mnemonic: &'static str, // only used for printing assembly
+}
+
+impl RegIndex {
+    const fn new(mnemonic: &'static str, register: Reg, region: Region) -> Self {
+        Self { mnemonic, register, region }
     }
 
     fn asm(&self) -> &str {
@@ -228,37 +270,37 @@ impl Reg {
         if w { Self::AX } else { Self::AL }
     }
 
-    const AL : Reg = Reg::new("AL", "A", Region::Low);
-    const AX : Reg = Reg::new("AX", "A", Region::Xtended);
+    const AL : RegIndex = RegIndex::new("AL", Reg::A, Region::Low);
+    const AX : RegIndex = RegIndex::new("AX", Reg::A, Region::Xtended);
 }
 
 // this also works for the R/M field, if MOD = 0b11
 // (register to register copy)
-fn parse_reg_field(reg: u8, w: bool) -> Reg {
+fn parse_reg_field(reg: u8, w: bool) -> RegIndex {
     use Region::*;
     match (reg, w) {
-        (0b000, _) => Reg::acc(w),
+        (0b000, _) => RegIndex::acc(w),
 
-        (0b001, false) => Reg::new("CL", "C", Low),
-        (0b001, true) => Reg::new("CX", "C", Xtended),
+        (0b001, false) => RegIndex::new("CL", Reg::C, Low),
+        (0b001, true) => RegIndex::new("CX", Reg::C, Xtended),
 
-        (0b010, false) => Reg::new("DL", "D", Low),
-        (0b010, true) => Reg::new("DX", "D", Xtended),
+        (0b010, false) => RegIndex::new("DL", Reg::D, Low),
+        (0b010, true) => RegIndex::new("DX", Reg::D, Xtended),
 
-        (0b011, false) => Reg::new("BL", "B", Low),
-        (0b011, true) => Reg::new("BX", "B", Xtended),
+        (0b011, false) => RegIndex::new("BL", Reg::B, Low),
+        (0b011, true) => RegIndex::new("BX", Reg::B, Xtended),
 
-        (0b100, false) => Reg::new("AH", "A", High),
-        (0b100, true) => Reg::new("SP", "SP", Xtended),
+        (0b100, false) => RegIndex::new("AH", Reg::A, High),
+        (0b100, true) => RegIndex::new("SP", Reg::SP, Xtended),
 
-        (0b101, false) => Reg::new("CH", "C", High),
-        (0b101, true) => Reg::new("BP", "BP", Xtended),
+        (0b101, false) => RegIndex::new("CH", Reg::C, High),
+        (0b101, true) => RegIndex::new("BP", Reg::BP, Xtended),
 
-        (0b110, false) => Reg::new("DH", "D", High),
-        (0b110, true) => Reg::new("SI", "SI", Xtended),
+        (0b110, false) => RegIndex::new("DH", Reg::D, High),
+        (0b110, true) => RegIndex::new("SI", Reg::SI, Xtended),
 
-        (0b111, false) => Reg::new("BH", "B", High),
-        (0b111, true) => Reg::new("DI", "DI", Xtended),
+        (0b111, false) => RegIndex::new("BH", Reg::B, High),
+        (0b111, true) => RegIndex::new("DI", Reg::DI, Xtended),
 
         _ => panic!("unexpected reg pattern"),
     }
@@ -285,29 +327,29 @@ fn parse_r_m_direct_addr(direct_addr: u16) -> EAC {
     EAC::new(DirectAddr(direct_addr), None)
 }
 
-fn parse_mem_to_acc(bs: &mut impl Iterator<Item = u8>) -> Mov {
+fn parse_mem_to_acc_mov(bs: &mut impl Iterator<Item = u8>) -> Mov {
     let b0 = bs.next().unwrap();
     let addr = consume_u16(bs);
     // byte 0  
     // 1010000W
     let w = b0 & 0b_0000_0001 != 0; // is_wide
-    let dst = Loc::Reg(Reg::acc(w));
+    let dst = Loc::Reg(RegIndex::acc(w));
     let src = Loc::EAC(EAC::new(EABase::DirectAddr(addr), None));
     Mov { src, dst }
 }
 
-fn parse_acc_to_mem(bs: &mut impl Iterator<Item = u8>) -> Mov {
+fn parse_acc_to_mem_mov(bs: &mut impl Iterator<Item = u8>) -> Mov {
     let b0 = bs.next().unwrap();
     let addr = consume_u16(bs);
     // byte 0  
     // 1010001W
     let w = b0 & 0b_0000_0001 != 0; // is_wide
-    let src = Loc::Reg(Reg::acc(w));
+    let src = Loc::Reg(RegIndex::acc(w));
     let dst = Loc::EAC(EAC::new(EABase::DirectAddr(addr), None));
     Mov { src, dst }
 }
 
-fn parse_r_m_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> {
+fn parse_r_m_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<Instruction> {
     // byte 0   byte 1
     // OPCODE|DW MOD|REG|R/M
     //   6       2   3   3
@@ -339,10 +381,10 @@ fn parse_r_m_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> 
         (Loc::Reg(reg_register), r_m_loc)
     };
     let params = BinopParams::from(is_mov, binop);
-    Some(print_binop_asm(params, src, dst))
+    Some(binop_to_instruction(params, src, dst))
 }
 
-fn parse_imm_to_reg(bs: &mut impl Iterator<Item = u8>) -> Mov {
+fn parse_imm_to_reg_mov(bs: &mut impl Iterator<Item = u8>) -> Mov {
     let b0 = bs.next().unwrap();
     // byte 0    
     // 1011|W|REG
@@ -358,7 +400,7 @@ fn parse_imm_to_reg(bs: &mut impl Iterator<Item = u8>) -> Mov {
     Mov { src, dst: Loc::Reg(dst) }
 }
 
-fn parse_imm_to_acc(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> {
+fn parse_imm_to_acc(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<Instruction> {
     // byte 0
     // 00BIN10W
     if b & 0b11_000_110 != 0b00_000_100 { // 00_xxx_10x
@@ -374,11 +416,11 @@ fn parse_imm_to_acc(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> 
     let b0 = bs.next().unwrap();
     let w = b0 & 0b_0000_0001 != 0; // is_wide
     let (src, dst) = if w {
-        (Loc::Imm16(consume_u16(bs)), Loc::Reg(Reg::acc(w)))
+        (Loc::Imm16(consume_u16(bs)), Loc::Reg(RegIndex::acc(w)))
     } else {
-        (Loc::Imm8(bs.next().unwrap()), Loc::Reg(Reg::acc(w)))
+        (Loc::Imm8(bs.next().unwrap()), Loc::Reg(RegIndex::acc(w)))
     };
-    Some(print_binop_asm(BinopParams::Op(binop), src, dst))
+    Some(binop_to_instruction(BinopParams::Op(binop), src, dst))
 }
 
 #[repr(u8)]
@@ -422,7 +464,7 @@ fn parse_r_m_loc(bs: &mut impl Iterator<Item = u8>, mod_bits: u8, r_m_bits: u8, 
         }
 }
 
-fn parse_imm_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> {
+fn parse_imm_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<Instruction> {
     let is_mov = b >> (8 - MOV_OPCODE_LEN) == MOV_OPCODE;
     let is_other_imm_to_r_m = b >> (8 - IMM_TO_R_M_OPCODE_LEN) == IMM_TO_R_M_OPCODE;
     if !is_mov && !is_other_imm_to_r_m {
@@ -458,7 +500,7 @@ fn parse_imm_to_r_m(b: u8, bs: &mut impl Iterator<Item = u8>) -> Option<String> 
     };
 
     let params = BinopParams::from(is_mov, binop);
-    Some(print_binop_asm(params, src, r_m_loc))
+    Some(binop_to_instruction(params, src, r_m_loc))
 }
 
 #[derive(Clone, Copy)]
@@ -477,12 +519,12 @@ impl BinopParams {
     }
 }
 
-fn print_binop_asm(params: BinopParams, src: Loc, dst: Loc) -> String {
+fn binop_to_instruction(params: BinopParams, src: Loc, dst: Loc) -> Instruction {
     match params {
-        BinopParams::Mov => Mov { src, dst }.asm(),
-        BinopParams::Op(BinOpCode::Add) => Add { src, dst }.asm(),
-        BinopParams::Op(BinOpCode::Sub) => Sub { src, dst }.asm(),
-        BinopParams::Op(BinOpCode::Cmp) => Cmp { src, dst }.asm(),
+        BinopParams::Mov => Instruction::Mov(Mov { src, dst }),
+        BinopParams::Op(BinOpCode::Add) => Instruction::Add(Add { src, dst }),
+        BinopParams::Op(BinOpCode::Sub) => Instruction::Sub(Sub { src, dst }),
+        BinopParams::Op(BinOpCode::Cmp) => Instruction::Cmp(Cmp { src, dst }),
     }
 }
 
@@ -504,6 +546,39 @@ enum Region {
     High, // 8 bits
 }
 
+fn decode_mov(byte: u8, bytes: &mut impl Iterator<Item = u8>) -> Option<Mov> {
+     if byte >> 4 == 0b_1011  {
+         Some(parse_imm_to_reg_mov(bytes))
+     } else if byte >> 1 == 0b_101_0000  {
+         Some(parse_mem_to_acc_mov(bytes))
+     } else if byte >> 1 == 0b_101_0001  {
+         Some(parse_acc_to_mem_mov(bytes))
+     } else {
+         None
+     }
+}
+
+fn decode(bytes: impl Iterator<Item = u8>) -> impl Iterator<Item = Instruction> {
+    let mut bytes = bytes.peekable();
+    std::iter::from_fn(move || {
+        let byte = *bytes.peek()?;
+        // catch alls
+        if let Some(inst) = parse_imm_to_r_m(byte, &mut bytes) {
+            Some(inst)
+        } else if let Some(inst) = parse_r_m_to_r_m(byte, &mut bytes) {
+            Some(inst)
+        } else if let Some(inst) = parse_imm_to_acc(byte, &mut bytes) {
+            Some(inst)
+        } else if let Some(jump) = try_parse_jump(byte, &mut bytes) {
+            Some(Instruction::Jump(jump))
+        } else if let Some(mov) = decode_mov(byte, &mut bytes) {
+            Some(Instruction::Mov(mov))
+        } else {
+            panic!("0b{:b}", byte);
+        }
+    })
+}
+
 // using https://edge.edx.org/c4x/BITSPilani/EEE231/asset/8086_family_Users_Manual_1_.pdf
 // as reference for how to decode the instructions
 fn main() {
@@ -511,34 +586,9 @@ fn main() {
     args.next().unwrap();
     let filename = args.next().unwrap_or_else(
         || panic!("Must supply filename"));
-    let mut bytes = std::fs::read(filename).unwrap().into_iter().peekable();
-
     println!("bits 16");
-    while let Some(&byte) = bytes.peek() {
-        // catch all for imm_to_r_m type instructions
-        if let Some(asm) = parse_imm_to_r_m(byte, &mut bytes) {
-            println!("{}", asm);
-        // catch all for rm_to_rm type instructions
-        } else if let Some(asm) = parse_r_m_to_r_m(byte, &mut bytes) {
-            println!("{}", asm);
-        // catch all for imm_to_acc type instructions
-        } else if let Some(asm) = parse_imm_to_acc(byte, &mut bytes) {
-            println!("{}", asm);
-        // catch all for jump type instructions
-        } else if let Some(asm) = try_parse_jump(byte, &mut bytes) {
-            println!("{}", asm);
-        // MOV instructions:
-        } else if byte >> 4 == 0b_1011  {
-            let asm = parse_imm_to_reg(&mut bytes).asm();
-            println!("{}", asm);
-        } else if byte >> 1 == 0b_101_0000  {
-            let asm = parse_mem_to_acc(&mut bytes).asm();
-            println!("{}", asm);
-        } else if byte >> 1 == 0b_101_0001  {
-            let asm = parse_acc_to_mem(&mut bytes).asm();
-            println!("{}", asm);
-        } else {
-            panic!("0b{:b}", byte);
-        }
+    let bytes = std::fs::read(filename).unwrap().into_iter();
+    for decoded in decode(bytes) {
+        println!("{}", decoded.asm());
     }
 }
