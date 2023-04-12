@@ -18,8 +18,21 @@ impl Instruction {
     }
 }
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum Reg {
+    A = 0,
+    B,
+    C,
+    D,
+    DI,
+    SI,
+    SP,
+    BP,
+}
+
 struct CPU {
-    registers: [u32; 8],
+    registers: [u32; 8], // indexed by `Reg as usize`
 }
 
 impl CPU {
@@ -267,19 +280,6 @@ impl EABase {
             Self::DirectAddr(n) => n.to_string(),
         }
     }
-}
-
-#[derive(Clone, Copy)]
-#[repr(u8)]
-enum Reg {
-    A = 0,
-    B,
-    C,
-    D,
-    DI,
-    SI,
-    SP,
-    BP,
 }
 
 struct RegIndex {

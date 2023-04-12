@@ -16,7 +16,7 @@ end
 #### BEGINNING OF SCRIPT
 
 # compile the program first
-`rustc ./decoder.rs`
+system("cd sim && cargo build")
 
 $failed = false
 
@@ -24,7 +24,7 @@ LISTINGS.each do |listing|
   Tempfile.create do |new_listing_file|
     Tempfile.create do |new_output_file|
       # decode the binary and put it in new_listing_file
-      new_listing_file.write(`./decoder #{listing}`)
+      new_listing_file.write(`./sim/target/debug/sim #{listing}`)
       new_listing_file.close
 
       `nasm #{new_listing_file.path} -o #{new_output_file.path}`
