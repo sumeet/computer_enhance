@@ -31,13 +31,38 @@ enum Reg {
     BP,
 }
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum Flag {
+    P = 0,
+    Z,
+}
+
+impl Flag {
+    fn format(&self) -> char {
+        match self {
+            Flag::P => 'P',
+            Flag::Z => 'Z',
+        }
+    }
+}
+
 struct CPU {
     registers: [u32; 8], // indexed by `Reg as usize`
+    flags: [bool; 2],
+}
+
+fn check_parity(n: u32) -> bool {
+    let lsb = n & 0xff;
+    lsb.count_ones() % 2 == 0
 }
 
 impl CPU {
     fn new() -> Self {
-        Self { registers: [0; 8] }
+        Self {
+            registers: [0; 8],
+            flags: [false; 2],
+        }
     }
 
     fn exec(&mut self, inst: Instruction) {
@@ -47,10 +72,36 @@ impl CPU {
                 self.set_dest(mov.dst, src);
             }
             Instruction::Jump(jump) => todo!(),
-            Instruction::Add(add) => todo!(),
-            Instruction::Sub(sub) => todo!(),
-            Instruction::Cmp(cmp) => todo!(),
+            Instruction::Add(add) => {
+                let src = self.get_src(add.src);
+                let dst = self.get_src(add.dst);
+                let sum = src.wrapping_add(dst);
+                self.set_dest(add.dst, sum);
+                self.set_flag(Flag::P, check_parity(sum));
+            }
+            Instruction::Sub(sub) => {
+                let src = self.get_src(sub.src);
+                let diff = self.get_src(sub.dst).wrapping_sub(src);
+                self.set_dest(sub.dst, diff);
+                self.set_flag(Flag::Z, diff == 0);
+                self.set_flag(Flag::P, check_parity(diff));
+            }
+            Instruction::Cmp(cmp) => {
+                let src = self.get_src(cmp.src);
+                let dst = self.get_src(cmp.dst);
+                let diff = src.wrapping_sub(dst);
+                self.set_flag(Flag::Z, diff == 0);
+                self.set_flag(Flag::P, check_parity(diff));
+            }
         }
+    }
+
+    fn get_flag(&self, flag: Flag) -> bool {
+        self.flags[flag as usize]
+    }
+
+    fn set_flag(&mut self, flag: Flag, val: bool) {
+        self.flags[flag as usize] = val;
     }
 
     fn get_src(&self, loc: Loc) -> u32 {
@@ -242,6 +293,7 @@ impl Cmp {
     }
 }
 
+#[derive(Clone, Copy)]
 enum Loc {
     Reg(RegIndex),
     EAC(EAC),
@@ -261,6 +313,7 @@ impl Loc {
 }
 
 // Effective Address Calculation
+#[derive(Copy, Clone)]
 struct EAC {
     base: EABase,
     displacement: Option<i16>, // can be either 0, 8, or 16 bits
@@ -280,6 +333,7 @@ impl EAC {
     }
 }
 
+#[derive(Copy, Clone)]
 enum EABase {
     BxSi,
     BxDi,
@@ -673,7 +727,9 @@ fn main() {
     let bytes = std::fs::read(filename).unwrap().into_iter();
     for inst in decode(bytes) {
         println!("{}", inst.asm());
-        cpu.exec(inst);
+        if is_sim {
+            cpu.exec(inst);
+        }
     }
 
     if is_sim {
@@ -697,5 +753,13 @@ fn main() {
                 val
             );
         }
+
+        print!("   flags: ");
+        for flag in [Flag::P, Flag::Z] {
+            if cpu.get_flag(flag) {
+                print!("{}", flag.format());
+            }
+        }
+        print!("\n");
     }
 }

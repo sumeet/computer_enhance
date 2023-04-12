@@ -8,9 +8,9 @@ DECODER_LISTINGS = [
   "listing_0040_challenge_movs",
   "listing_0041_add_sub_cmp_jnz",
   # unimplemented:
-  # "listing_0043_immediate_movs.txt",
+  # "listing_0042_completionist_decode",
 ]
-DECODER_LISTINGS = []
+#DECODER_LISTINGS = []
 
 def readbin path
   File.read path, encoding: "BINARY"
@@ -31,12 +31,12 @@ end
 
 $failed = false
 
-#### DECODER ONLY TESTS ################
+puts "running #{DECODER_LISTINGS.size} decoder tests..."
 DECODER_LISTINGS.each do |listing|
   Tempfile.create do |new_listing_file|
     Tempfile.create do |new_output_file|
       # decode the binary and put it in new_listing_file
-      new_listing_file.write(run_sim(listing))
+      new_listing_file.write(run(listing))
       new_listing_file.close
 
       `nasm #{new_listing_file.path} -o #{new_output_file.path}`
@@ -55,20 +55,48 @@ exit 1 if $failed
 
 SIM_LISTINGS = [
   "listing_0043_immediate_movs",
+  "listing_0044_register_movs",
+  # "listing_0045_challenge_register_movs",
+  "listing_0046_add_sub_cmp",
 ]
 
-def ingest_registers(output)
-  output.lines(chomp: true).filter_map do |line|
+State = Struct.new(:regs, :flags)
+
+def ingest_state(output)
+  lines = output.lines(chomp: true)
+
+  regs = lines.filter_map do |line|
     next unless line.start_with? "      "
     reg, val, _ = line.split " "
-    [reg.delete_suffix(":"), Integer(val)]
+    reg.delete_suffix! ":"
+    [reg, Integer(val)]
   end.to_h
+
+  flags = ""
+  flags_line, = lines.grep(/^   flags:/)
+  if !flags_line.nil?
+    flags = flags_line.delete_prefix "   flags: "
+  end
+
+  State.new(regs, flags)
 end
 
+def compare(want_state, got_state)
+  is_regs_match = want_state.regs.all? do |reg, value|
+    got_state.regs[reg] == value
+  end
+  is_flags_match = want_state.flags == got_state.flags
+  is_regs_match && is_flags_match
+end
+
+puts
+puts "running #{SIM_LISTINGS.size} simulator tests..."
 SIM_LISTINGS.each do |listing|
-  reference_registers = ingest_registers(File.read "#{listing}.txt")
-  our_registers = ingest_registers(run(listing, sim: true))
-  if reference_registers != our_registers
+  reference_registers = ingest_state(File.read "#{listing}.txt")
+  our_registers = ingest_state(run(listing, sim: true))
+  if compare(reference_registers, our_registers)
+    puts "#{listing} pass"
+  else
     $failed = true
     puts "#{listing} sim fail, here's the diff of the state"
     puts "expected: #{reference_registers}"
