@@ -31,6 +31,7 @@ enum Reg {
     SI,
     SP,
     BP,
+    IP,
 }
 
 impl Reg {
@@ -64,17 +65,17 @@ impl Flag {
 }
 
 struct CPU {
-    registers: [u32; Reg::num()], // indexed by `Reg as usize`
+    registers: [u16; Reg::num()], // indexed by `Reg as usize`
     flags: [bool; Flag::num()],
 }
 
-fn check_parity(n: u32) -> bool {
+fn check_parity(n: u16) -> bool {
     let lsb = n & 0xff;
     lsb.count_ones() % 2 == 0
 }
 
-fn check_sign(n: u32) -> bool {
-    (n as i32) < 0
+fn check_sign(n: u16) -> bool {
+    (n as i16) < 0
 }
 
 impl CPU {
@@ -132,7 +133,7 @@ impl CPU {
         self.flags[flag as usize] = val;
     }
 
-    fn get_src(&self, loc: Loc) -> u32 {
+    fn get_src(&self, loc: Loc) -> u16 {
         match loc {
             Loc::Imm8(n) => n as _,
             Loc::Imm16(n) => n as _,
@@ -141,7 +142,7 @@ impl CPU {
         }
     }
 
-    fn set_dest(&mut self, loc: Loc, val: u32) {
+    fn set_dest(&mut self, loc: Loc, val: u16) {
         match loc {
             Loc::Reg(reg) => {
                 self.registers[reg.register as usize] = val;
@@ -408,6 +409,7 @@ impl RegIndex {
     const BP: RegIndex = RegIndex::new("BP", Reg::BP, Region::Xtended);
     const SI: RegIndex = RegIndex::new("SI", Reg::SI, Region::Xtended);
     const DI: RegIndex = RegIndex::new("DI", Reg::DI, Region::Xtended);
+    const IP: RegIndex = RegIndex::new("IP", Reg::IP, Region::Xtended);
 
     const fn new(mnemonic: &'static str, register: Reg, region: Region) -> Self {
         Self {
@@ -772,6 +774,7 @@ fn main() {
             RegIndex::BP,
             RegIndex::SI,
             RegIndex::DI,
+            RegIndex::IP,
         ] {
             let val = cpu.get_src(Loc::Reg(reg));
             println!(
