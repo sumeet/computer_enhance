@@ -94,13 +94,21 @@ impl CPU {
         self.set_dest(Loc::Reg(RegIndex::IP), ip);
     }
 
-    fn exec(&mut self, inst: Instruction) {
+    // TODO: this would also manage internally the IP register, right now it's being done by the caller
+    // also returns the jump offset
+    fn exec(&mut self, inst: Instruction) -> i8 {
         match inst {
             Instruction::Mov(mov) => {
                 let src = self.get_src(mov.src);
                 self.set_dest(mov.dst, src);
             }
-            Instruction::Jump(jump) => todo!(),
+            Instruction::Jump(jump) => {
+                let should_jump = match jump.typ {
+                    JumpType::Jnz => !self.get_flag(Flag::Zero),
+                    _ => todo!("other jumps not implemented"),
+                };
+                return if should_jump { jump.offset } else { 0 };
+            }
             Instruction::Add(add) => {
                 let src = self.get_src(add.src);
                 let dst = self.get_src(add.dst);
@@ -131,6 +139,7 @@ impl CPU {
                 self.set_flag(Flag::Sign, check_sign(diff));
             }
         }
+        0
     }
 
     fn get_flag(&self, flag: Flag) -> bool {
@@ -785,8 +794,9 @@ fn main() {
     while (cpu.ip() as usize) < bytes.len() {
         let (inst, num_bytes) = decode_first_at(&bytes, cpu.ip() as usize);
         println!("{}", inst.asm());
-        cpu.exec(inst);
-        cpu.set_ip(cpu.ip() + num_bytes as u16);
+        let jump_offset = cpu.exec(inst);
+        let next_ip = (cpu.ip() as i32) + jump_offset as i32 + num_bytes as i32;
+        cpu.set_ip(next_ip as u16);
     }
 
     println!("Final registers:");
