@@ -1,3 +1,5 @@
+#![feature(variant_count)]
+
 enum Instruction {
     Mov(Mov),
     Jump(Jump),
@@ -31,25 +33,39 @@ enum Reg {
     BP,
 }
 
+impl Reg {
+    const fn num() -> usize {
+        std::mem::variant_count::<Self>()
+    }
+}
+
 #[derive(Clone, Copy)]
 #[repr(u8)]
 enum Flag {
-    P = 0,
-    Z,
+    Parity = 0,
+    Zero,
+    Carry,
+    Sign,
 }
 
 impl Flag {
+    const fn num() -> usize {
+        std::mem::variant_count::<Self>()
+    }
+
     fn format(&self) -> char {
         match self {
-            Flag::P => 'P',
-            Flag::Z => 'Z',
+            Flag::Parity => 'P',
+            Flag::Zero => 'Z',
+            Flag::Carry => 'C',
+            Flag::Sign => 'S',
         }
     }
 }
 
 struct CPU {
-    registers: [u32; 8], // indexed by `Reg as usize`
-    flags: [bool; 2],
+    registers: [u32; Reg::num()], // indexed by `Reg as usize`
+    flags: [bool; Flag::num()],
 }
 
 fn check_parity(n: u32) -> bool {
@@ -57,11 +73,15 @@ fn check_parity(n: u32) -> bool {
     lsb.count_ones() % 2 == 0
 }
 
+fn check_sign(n: u32) -> bool {
+    (n as i32) < 0
+}
+
 impl CPU {
     fn new() -> Self {
         Self {
-            registers: [0; 8],
-            flags: [false; 2],
+            registers: [0; Reg::num()],
+            flags: [false; Flag::num()],
         }
     }
 
@@ -75,23 +95,31 @@ impl CPU {
             Instruction::Add(add) => {
                 let src = self.get_src(add.src);
                 let dst = self.get_src(add.dst);
-                let sum = src.wrapping_add(dst);
+                let (sum, is_overflow) = src.overflowing_add(dst);
                 self.set_dest(add.dst, sum);
-                self.set_flag(Flag::P, check_parity(sum));
+                self.set_flag(Flag::Parity, check_parity(sum));
+                self.set_flag(Flag::Carry, is_overflow);
+                self.set_flag(Flag::Zero, sum == 0);
+                self.set_flag(Flag::Sign, check_sign(sum));
             }
             Instruction::Sub(sub) => {
                 let src = self.get_src(sub.src);
-                let diff = self.get_src(sub.dst).wrapping_sub(src);
+                let (diff, is_overflow) = self.get_src(sub.dst).overflowing_sub(src);
                 self.set_dest(sub.dst, diff);
-                self.set_flag(Flag::Z, diff == 0);
-                self.set_flag(Flag::P, check_parity(diff));
+                self.set_flag(Flag::Zero, diff == 0);
+                self.set_flag(Flag::Parity, check_parity(diff));
+                self.set_flag(Flag::Carry, is_overflow);
+                self.set_flag(Flag::Sign, check_sign(diff));
             }
             Instruction::Cmp(cmp) => {
+                // TODO: share code with sub, it's exactly the same except not storing the result
                 let src = self.get_src(cmp.src);
                 let dst = self.get_src(cmp.dst);
-                let diff = src.wrapping_sub(dst);
-                self.set_flag(Flag::Z, diff == 0);
-                self.set_flag(Flag::P, check_parity(diff));
+                let (diff, is_overflow) = src.overflowing_sub(dst);
+                self.set_flag(Flag::Zero, diff == 0);
+                self.set_flag(Flag::Parity, check_parity(diff));
+                self.set_flag(Flag::Carry, is_overflow);
+                self.set_flag(Flag::Sign, check_sign(diff));
             }
         }
     }
@@ -755,7 +783,7 @@ fn main() {
         }
 
         print!("   flags: ");
-        for flag in [Flag::P, Flag::Z] {
+        for flag in [Flag::Parity, Flag::Zero, Flag::Sign, Flag::Carry] {
             if cpu.get_flag(flag) {
                 print!("{}", flag.format());
             }
