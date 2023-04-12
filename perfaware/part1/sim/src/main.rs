@@ -86,6 +86,14 @@ impl CPU {
         }
     }
 
+    fn ip(&self) -> u16 {
+        self.get_src(Loc::Reg(RegIndex::IP))
+    }
+
+    fn set_ip(&mut self, ip: u16) {
+        self.set_dest(Loc::Reg(RegIndex::IP), ip);
+    }
+
     fn exec(&mut self, inst: Instruction) {
         match inst {
             Instruction::Mov(mov) => {
@@ -720,7 +728,15 @@ fn decode_mov(byte: u8, bytes: &mut impl Iterator<Item = u8>) -> Option<Mov> {
     }
 }
 
-fn decode(bytes: impl Iterator<Item = u8>) -> impl Iterator<Item = Instruction> {
+// returns an instruction, and number of bytes in that instruction
+fn decode_first_at(bytes: &[u8], ip: usize) -> (Instruction, usize) {
+    let bytes = bytes[ip..].iter().copied();
+    let mut bytes = CountingIterator::new(bytes);
+    let next = decode_stream(&mut bytes).next().unwrap();
+    (next, bytes.num_consumed)
+}
+
+fn decode_stream(bytes: &mut impl Iterator<Item = u8>) -> impl Iterator<Item = Instruction> + '_ {
     let mut bytes = bytes.peekable();
     std::iter::from_fn(move || {
         let byte = *bytes.peek()?;
@@ -751,46 +767,80 @@ fn main() {
         .unwrap_or_else(|| panic!("Must supply filename"));
     // third argument provided means we're running in sim mode
     let is_sim = args.next().is_some();
-    let mut cpu = CPU::new();
 
-    println!("bits 16");
-    let bytes = std::fs::read(filename).unwrap().into_iter();
-    for inst in decode(bytes) {
-        println!("{}", inst.asm());
-        if is_sim {
-            cpu.exec(inst);
+    let bytes = std::fs::read(filename)
+        .unwrap()
+        .into_iter()
+        .collect::<Vec<_>>();
+    // only decode the instructions
+    if !is_sim {
+        println!("bits 16");
+        for inst in decode_stream(&mut bytes.into_iter()) {
+            println!("{}", inst.asm());
         }
+        return;
     }
 
-    if is_sim {
-        println!("Final registers:");
+    let mut cpu = CPU::new();
+    while (cpu.ip() as usize) < bytes.len() {
+        let (inst, num_bytes) = decode_first_at(&bytes, cpu.ip() as usize);
+        println!("{}", inst.asm());
+        cpu.exec(inst);
+        cpu.set_ip(cpu.ip() + num_bytes as u16);
+    }
 
-        for reg in [
-            RegIndex::AX,
-            RegIndex::BX,
-            RegIndex::CX,
-            RegIndex::DX,
-            RegIndex::SP,
-            RegIndex::BP,
-            RegIndex::SI,
-            RegIndex::DI,
-            RegIndex::IP,
-        ] {
-            let val = cpu.get_src(Loc::Reg(reg));
-            println!(
-                "      {}: {:#06x} ({})",
-                reg.mnemonic.to_lowercase(),
-                val,
-                val
-            );
-        }
+    println!("Final registers:");
+    for reg in [
+        RegIndex::AX,
+        RegIndex::BX,
+        RegIndex::CX,
+        RegIndex::DX,
+        RegIndex::SP,
+        RegIndex::BP,
+        RegIndex::SI,
+        RegIndex::DI,
+        RegIndex::IP,
+    ] {
+        let val = cpu.get_src(Loc::Reg(reg));
+        println!(
+            "      {}: {:#06x} ({})",
+            reg.mnemonic.to_lowercase(),
+            val,
+            val
+        );
+    }
 
-        print!("   flags: ");
-        for flag in [Flag::Parity, Flag::Zero, Flag::Sign, Flag::Carry] {
-            if cpu.get_flag(flag) {
-                print!("{}", flag.format());
-            }
+    print!("   flags: ");
+    for flag in [Flag::Parity, Flag::Zero, Flag::Sign, Flag::Carry] {
+        if cpu.get_flag(flag) {
+            print!("{}", flag.format());
         }
-        print!("\n");
+    }
+    print!("\n");
+}
+
+struct CountingIterator<I: Iterator> {
+    iter: I,
+    num_consumed: usize,
+}
+
+impl<I: Iterator> CountingIterator<I> {
+    pub fn new(iter: I) -> Self {
+        CountingIterator {
+            iter,
+            num_consumed: 0,
+        }
+    }
+}
+
+impl<I: Iterator> Iterator for CountingIterator<I> {
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.iter.next();
+        if item.is_some() {
+            self.num_consumed += 1;
+        }
+        item
     }
 }

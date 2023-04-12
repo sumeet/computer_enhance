@@ -77,6 +77,7 @@ def ingest_state(output)
   flags_line, = lines.grep(/^   flags:/)
   if !flags_line.nil?
     flags = flags_line.delete_prefix "   flags: "
+    flags = flags.chars.sort.join("")
   end
 
   State.new(regs, flags)
