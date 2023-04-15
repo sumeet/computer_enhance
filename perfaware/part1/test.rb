@@ -64,6 +64,7 @@ SIM_LISTINGS = [
   # "listing_0050_challenge_jumps", 
   "listing_0051_memory_mov",
   "listing_0052_memory_add_loop",
+  "listing_0053_add_loop_challenge",
 ]
 
 State = Struct.new(:regs, :flags)
