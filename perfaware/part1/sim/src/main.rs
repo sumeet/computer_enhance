@@ -186,6 +186,11 @@ impl CPU {
         match base {
             EABase::DirectAddr(n) => n,
             EABase::Bx => self.get_src(Loc::Reg(RegIndex::BX)),
+            EABase::BpSi => {
+                let bp = self.get_src(Loc::Reg(RegIndex::BP));
+                let si = self.get_src(Loc::Reg(RegIndex::SI));
+                bp.wrapping_add(si)
+            }
             otherwise => panic!("TODO: get_offset for {:?}", otherwise),
         }
     }
