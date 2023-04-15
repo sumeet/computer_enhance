@@ -60,7 +60,9 @@ SIM_LISTINGS = [
   "listing_0046_add_sub_cmp",
   "listing_0048_ip_register",
   "listing_0049_conditional_jumps",
-  # "listing_0050_challenge_jumps",
+  # we might as well try this one, looks not that bad:
+  # "listing_0050_challenge_jumps", 
+  "listing_0051_memory_mov",
 ]
 
 State = Struct.new(:regs, :flags)

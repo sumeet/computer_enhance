@@ -65,7 +65,10 @@ impl Flag {
 }
 
 struct CPU {
-    registers: [u16; Reg::num()], // indexed by `Reg as usize`
+    // not implementing segmented memory, otherwise we'd have more than 64k
+    memory: [u8; u16::MAX as usize],
+    // indexed by `Reg as usize`
+    registers: [u16; Reg::num()],
     flags: [bool; Flag::num()],
 }
 
@@ -81,6 +84,7 @@ fn check_sign(n: u16) -> bool {
 impl CPU {
     fn new() -> Self {
         Self {
+            memory: [0; u16::MAX as usize],
             registers: [0; Reg::num()],
             flags: [false; Flag::num()],
         }
@@ -155,7 +159,11 @@ impl CPU {
             Loc::Imm8(n) => n as _,
             Loc::Imm16(n) => n as _,
             Loc::Reg(reg) => self.registers[reg.register as usize],
-            Loc::EAC(_) => todo!(),
+            Loc::EAC(eac) => {
+                let offset = (self.get_offset(eac.base) as i32
+                    + eac.displacement.unwrap_or(0) as i32) as usize;
+                u16::from_le_bytes(self.memory[offset..offset + 2].try_into().unwrap())
+            }
         }
     }
 
@@ -164,8 +172,21 @@ impl CPU {
             Loc::Reg(reg) => {
                 self.registers[reg.register as usize] = val;
             }
-            Loc::EAC(_) => todo!(),
+            Loc::EAC(eac) => {
+                let offset = (self.get_offset(eac.base) as i32
+                    + eac.displacement.unwrap_or(0) as i32) as usize;
+                let bytes = val.to_le_bytes();
+                self.memory[offset..offset + bytes.len()].copy_from_slice(&bytes);
+            }
             Loc::Imm8(_) | Loc::Imm16(_) => unreachable!(),
+        }
+    }
+
+    fn get_offset(&self, base: EABase) -> u16 {
+        match base {
+            EABase::DirectAddr(n) => n,
+            EABase::Bx => self.get_src(Loc::Reg(RegIndex::BX)),
+            otherwise => panic!("TODO: get_offset for {:?}", otherwise),
         }
     }
 }
@@ -379,7 +400,7 @@ impl EAC {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum EABase {
     BxSi,
     BxDi,
