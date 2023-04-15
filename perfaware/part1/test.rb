@@ -65,6 +65,7 @@ SIM_LISTINGS = [
   "listing_0051_memory_mov",
   "listing_0052_memory_add_loop",
   "listing_0053_add_loop_challenge",
+  "listing_0054_draw_rectangle",
 ]
 
 State = Struct.new(:regs, :flags)

@@ -191,6 +191,7 @@ impl CPU {
                 let si = self.get_src(Loc::Reg(RegIndex::SI));
                 bp.wrapping_add(si)
             }
+            EABase::Bp => self.get_src(Loc::Reg(RegIndex::BP)),
             otherwise => panic!("TODO: get_offset for {:?}", otherwise),
         }
     }
