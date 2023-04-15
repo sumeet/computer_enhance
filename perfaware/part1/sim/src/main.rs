@@ -1,5 +1,7 @@
 #![feature(variant_count)]
 
+use std::io::Write;
+
 enum Instruction {
     Mov(Mov),
     Jump(Jump),
@@ -801,8 +803,12 @@ fn main() {
     let filename = args
         .next()
         .unwrap_or_else(|| panic!("Must supply filename"));
+
+    let flags = args.collect::<Vec<_>>();
+
     // third argument provided means we're running in sim mode
-    let is_sim = args.next().is_some();
+    let is_sim = flags.iter().find(|&f| f == "-exec").is_some();
+    let is_image = flags.iter().find(|&f| f == "-image").is_some();
 
     let bytes = std::fs::read(filename)
         .unwrap()
@@ -854,6 +860,11 @@ fn main() {
         }
     }
     print!("\n");
+
+    if is_image {
+        let mut f = std::fs::File::create("image.bin").unwrap();
+        f.write_all(&cpu.memory).unwrap();
+    }
 }
 
 struct CountingIterator<I: Iterator> {
