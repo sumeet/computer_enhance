@@ -476,6 +476,10 @@ impl RegIndex {
             Self::AL
         }
     }
+
+    fn is_acc(&self) -> bool {
+        matches!(self.register, Reg::A)
+    }
 }
 
 // this also works for the R/M field, if MOD = 0b11
@@ -809,6 +813,7 @@ fn main() {
     // third argument provided means we're running in sim mode
     let is_sim = flags.iter().find(|&f| f == "-exec").is_some();
     let is_image = flags.iter().find(|&f| f == "-image").is_some();
+    let is_cycle_estimate = flags.iter().find(|&f| f == "-cycle-estimate").is_some();
 
     let bytes = std::fs::read(filename)
         .unwrap()
@@ -817,9 +822,26 @@ fn main() {
     // only decode the instructions
     if !is_sim {
         println!("bits 16");
+
+        let mut total = 0;
+
         for inst in decode_stream(&mut bytes.into_iter()) {
-            println!("{}", inst.asm());
+            print!("{}", inst.asm());
+
+            if is_cycle_estimate {
+                let est = estimate_8086(&inst);
+                total += est;
+                println!(" ; +{} = {}", est, total);
+            } else {
+                println!();
+            }
         }
+
+        if is_cycle_estimate {
+            println!();
+            println!("Total cycles: {}", total);
+        }
+
         return;
     }
 
@@ -890,5 +912,64 @@ impl<I: Iterator> Iterator for CountingIterator<I> {
             self.num_consumed += 1;
         }
         item
+    }
+}
+
+// from table 2-21, on page 2-61 in the 8086 manual
+fn estimate_8086(inst: &Instruction) -> usize {
+    match inst {
+        Instruction::Mov(mov) => match (mov.dst, mov.src) {
+            // memory, accumulator
+            (Loc::EAC(_), Loc::Reg(reg)) if reg.is_acc() => 10,
+            // accumulator, memory
+            (Loc::Reg(reg), Loc::EAC(_)) if reg.is_acc() => 10,
+            // register, register
+            (Loc::Reg(_), Loc::Reg(_)) => 2,
+            // register, memory
+            (Loc::Reg(_), Loc::EAC(eac)) => 8 + estimate_8086_eac(eac),
+            // memory, register
+            (Loc::EAC(eac), Loc::Reg(_)) => 9 + estimate_8086_eac(eac),
+            // register, immediate
+            (Loc::Reg(_), Loc::Imm8(_) | Loc::Imm16(_)) => 4,
+            // memory, immediate
+            (Loc::EAC(eac), Loc::Imm8(_) | Loc::Imm16(_)) => 10 + estimate_8086_eac(eac),
+            _ => panic!("counting cycles for {} is not implemented yet", inst.asm()),
+        },
+        Instruction::Add(add) => match (add.dst, add.src) {
+            // register, register
+            (Loc::Reg(_), Loc::Reg(_)) => 3,
+            // register, memory
+            (Loc::Reg(_), Loc::EAC(eac)) => 9 + estimate_8086_eac(eac),
+            // memory, register
+            (Loc::EAC(eac), Loc::Reg(_)) => 16 + estimate_8086_eac(eac),
+            // register (or accumulator), immediate
+            (Loc::Reg(_), Loc::Imm8(_) | Loc::Imm16(_)) => 4,
+            // memory, immediate
+            (Loc::EAC(eac), Loc::Imm8(_) | Loc::Imm16(_)) => 17 + estimate_8086_eac(eac),
+            _ => panic!("counting cycles for {} is not implemented yet", inst.asm()),
+        },
+        _ => panic!("counting cycles for {} is not implemented yet", inst.asm()),
+    }
+}
+
+// from table 2-20, on page 2-51 in the 8086 manual
+fn estimate_8086_eac(eac: EAC) -> usize {
+    use EABase::*;
+    match (eac.base, eac.displacement) {
+        // displacement only
+        (DirectAddr(_), None) => 6,
+        // base or index only
+        (Bx | Bp | Si | Di, None | Some(0)) => 5,
+        // displacement + base or index
+        (Bx | Bp | Si | Di, Some(_)) => 9,
+        // base + index
+        (BpDi | BxSi, None) => 7,
+        (BpSi | BxDi, None) => 8,
+        // displacement + base + index
+        (BpDi, Some(_)) => 11,
+        (BxSi, Some(_)) => 11,
+        (BpSi, Some(_)) => 12,
+        (BxDi, Some(_)) => 12,
+        (DirectAddr(_), Some(_)) => panic!("direct addr + displacement is impossible"),
     }
 }
