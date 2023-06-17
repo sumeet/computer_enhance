@@ -3,6 +3,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <x86intrin.h>
 
 const std::array<char, 2> X0 = {'x', '0'};
 const std::array<char, 2> X1 = {'x', '1'};
@@ -10,10 +11,12 @@ const std::array<char, 2> Y0 = {'y', '0'};
 const std::array<char, 2> Y1 = {'y', '1'};
 
 typedef double f64;
+typedef unsigned long long u64;
 
 const f64 EARTH_RADIUS = 6372.8;
 
 #include "listing_0065_haversine_formula.cpp"
+#include "listing_0070_platform_metrics.cpp"
 
 template <std::size_t N> std::array<char, N> consume_n(std::ifstream &file) {
   std::array<char, N> buf;
@@ -54,7 +57,37 @@ void consume_literal(std::ifstream &file, const std::string &literal) {
   }
 }
 
+u64 ApproxCPUTimerFreq() {
+  u64 MillisecondsToWait = 100;
+
+  u64 OSFreq = GetOSTimerFreq();
+
+  u64 CPUStart = ReadCPUTimer();
+  u64 OSStart = ReadOSTimer();
+  u64 OSEnd = 0;
+  u64 OSElapsed = 0;
+  u64 OSWaitTime = OSFreq * MillisecondsToWait / 1000;
+  while (OSElapsed < OSWaitTime) {
+    OSEnd = ReadOSTimer();
+    OSElapsed = OSEnd - OSStart;
+  }
+
+  u64 CPUEnd = ReadCPUTimer();
+  u64 CPUElapsed = CPUEnd - CPUStart;
+  u64 CPUFreq = 0;
+  if (OSElapsed) {
+    CPUFreq = OSFreq * CPUElapsed / OSElapsed;
+  }
+  return CPUFreq;
+}
+
+u64 rtdsc() { return __rdtsc(); }
+
 int main(int argc, char **argv) {
+  auto cpu_timer_freq = ApproxCPUTimerFreq();
+
+  auto start_time = rtdsc();
+
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0] << " <filename.json>" << std::endl;
     return 1;
@@ -123,5 +156,12 @@ int main(int argc, char **argv) {
 
   std::cout << "Average distance between pairs: " << (sum / (f64)num_pairs)
             << std::endl;
+
+  auto end_time = rtdsc();
+  auto elapsed_time = end_time - start_time;
+  std::cout << "Elapsed time: " << (f64)elapsed_time / (f64)cpu_timer_freq
+            << " seconds (CPU Timer Freq: " << cpu_timer_freq << ")"
+            << std::endl;
+
   return 0;
 }

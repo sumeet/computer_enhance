@@ -28,6 +28,8 @@ Cluster rand_cluster(std::mt19937 &mt) {
   };
 }
 
+#include "listing_0070_platform_metrics.cpp"
+
 double clip(double n) {
   if (n < MIN) {
     n = MAX - n;
